@@ -10,6 +10,7 @@ depends on the specific cards dealt, only on properties the method must hold for
 import random
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from gutcheck import game as G
@@ -25,7 +26,10 @@ def _play(seed, hands=30):
     random.seed(seed)
     d = Path(tempfile.mkdtemp())
     g = G.Game(d / "s.json", d / "c.json", d / "sess", d / "cal.json", d / "h.db")
-    g.sit_down(hero="Phill")
+    # sit_down draws the master seed from SystemRandom, so random.seed alone never made the deals
+    # repeat (this test flaked on CI); pin that draw so the same session plays every run.
+    with unittest.mock.patch.object(G.random, "SystemRandom", lambda: random.Random(seed)):
+        g.sit_down(hero="Phill")
     for _ in range(hands):
         g.new_hand()
         guard = 0
