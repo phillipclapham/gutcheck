@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gutcheck</title>
+<style>
+  :root{
+    --felt:#1d6b46; --felt-edge:#11402a; --rail:#5a3b22; --ink:#0d1411;
+    --gold:#e8c372; --chip:#d8d3c8; --hero:#ffd86b; --dim:#9fb4a8;
+    --collapse:#b9a3ef;   /* the ◆ range-collapse axis — a DISTINCT hue from the green ♠ live ding */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:radial-gradient(circle at 50% 30%,#22312a,#0d1411 70%);
+    color:#eaf2ec;min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  }
+  header{display:flex;gap:18px;align-items:baseline;padding:16px 0 6px;flex-wrap:wrap;justify-content:center}
+  header h1{font-size:20px;letter-spacing:.5px;color:var(--gold)}
+  header .meta{color:var(--dim);font-size:13px}
+  .wrap{width:min(960px,96vw)}
+
+  .table-area{position:relative;height:560px;margin:34px 0 10px}
+  .felt{
+    position:absolute;inset:54px 60px 30px;border-radius:50%/46%;
+    background:radial-gradient(ellipse at 50% 42%,var(--felt),var(--felt-edge));
+    border:14px solid var(--rail);box-shadow:0 18px 40px rgba(0,0,0,.5),inset 0 0 60px rgba(0,0,0,.35);
+  }
+  .center{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);text-align:center;width:60%}
+  .board{display:flex;gap:6px;justify-content:center;min-height:64px;align-items:center}
+  .pot{margin-top:8px;color:var(--gold);font-weight:600;letter-spacing:.5px;display:flex;gap:8px;align-items:center;justify-content:center}
+  .street{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:1.5px;margin-top:2px}
+
+  .seat{position:absolute;width:140px;transform:translate(-50%,-50%);text-align:center;transition:opacity .2s;cursor:pointer}
+  .seat .badge{
+    position:relative;background:rgba(8,18,13,.85);border:1px solid #2c4438;border-radius:10px;padding:6px 8px;
+    box-shadow:0 4px 12px rgba(0,0,0,.4);
+  }
+  .seat:hover .badge{border-color:#4d6f5d}
+  .seat.hero .badge{border-color:var(--hero);box-shadow:0 0 0 1px var(--hero),0 6px 16px rgba(0,0,0,.5)}
+  .seat.actor .badge{border-color:#7fe0a8;box-shadow:0 0 0 2px #7fe0a8,0 0 18px rgba(127,224,168,.5)}
+  .seat.winner .badge{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold),0 0 22px rgba(232,195,114,.6)}
+  .seat.folded{opacity:.38}
+  .seat .nm{font-weight:600}
+  .seat .ty{font-size:11px;color:var(--gold);min-height:13px}
+  .seat .pos{font-size:10px;color:var(--dim);letter-spacing:1px}
+  .seat .stk{font-size:13px;color:#cfe6d8;margin-top:2px}
+  .seat .cards{display:flex;gap:4px;justify-content:center;margin-top:5px;min-height:42px}
+  .seat .tap{font-size:9px;color:#5f7568;margin-top:3px}
+  .dealer{
+    position:absolute;top:-9px;right:-9px;width:24px;height:24px;border-radius:50%;
+    background:#fbfbf7;color:#1a1a1a;font-weight:800;font-size:12px;
+    display:flex;align-items:center;justify-content:center;
+    border:2px solid var(--gold);box-shadow:0 2px 6px rgba(0,0,0,.5);
+  }
+
+  /* bet chips on the felt */
+  #chips{position:absolute;inset:0;pointer-events:none}
+  .chip{
+    position:absolute;transform:translate(-50%,-50%);min-width:22px;height:22px;border-radius:50%;
+    background:radial-gradient(circle at 50% 38%,#e06464,#b23434);
+    border:2px dashed rgba(255,255,255,.7);box-shadow:0 2px 6px rgba(0,0,0,.5);
+    display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;
+    padding:0 3px;
+  }
+  .chip.pot{background:radial-gradient(circle at 50% 38%,#ecca7e,#bd932f);color:#2a1d05;border-color:rgba(255,255,255,.55)}
+
+  .card{
+    width:26px;height:37px;border-radius:5px;background:#fbfbf7;color:#111;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font-weight:700;box-shadow:0 2px 5px rgba(0,0,0,.4);line-height:1;
+  }
+  .card.lg{width:38px;height:54px;font-size:17px}
+  .card .r{font-size:12px}
+  .card.lg .r{font-size:18px}
+  .card.red{color:#c4262e}
+  .card.back{
+    background:repeating-linear-gradient(45deg,#3b5bdb,#3b5bdb 4px,#27409e 4px,#27409e 8px);
+    color:transparent;border:1px solid #1b2c6e;
+  }
+  @keyframes dealin{from{opacity:0;transform:translateY(-12px) scale(.82)}to{opacity:1;transform:none}}
+  .card.dealt{animation:dealin .3s ease-out}
+  .actionlabel{
+    position:absolute;left:50%;top:-14px;transform:translateX(-50%);white-space:nowrap;
+    background:var(--gold);color:#2a1d05;font-size:11px;font-weight:700;padding:2px 8px;
+    border-radius:9px;box-shadow:0 2px 6px rgba(0,0,0,.5);animation:dealin .2s ease-out;z-index:5;
+  }
+  .speed{display:flex;gap:4px;align-items:center}
+  .speed span{font-size:11px;color:var(--dim);margin-right:2px}
+  .speed button{padding:4px 9px;font-size:11px;font-weight:600;background:#1a2a22;color:var(--dim);border:1px solid #2c4438;border-radius:7px}
+  .speed button.on{background:var(--gold);color:#2a1d05;border-color:var(--gold)}
+
+  /* self-clearing hand recap */
+  .toast{
+    position:absolute;left:50%;top:4%;transform:translate(-50%,-12px);
+    background:rgba(8,18,13,.96);border:1px solid var(--gold);border-radius:12px;
+    padding:11px 18px;opacity:0;pointer-events:none;transition:opacity .35s,transform .35s;
+    z-index:30;text-align:center;max-width:84%;box-shadow:0 10px 30px rgba(0,0,0,.5);
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto;cursor:pointer}
+  .toast h4{color:var(--gold);font-size:14px;margin-bottom:4px}
+  .toast .net{font-size:12px;color:var(--dim)}
+  .toast .pos-amt{color:#7fe0a8} .toast .neg-amt{color:#d9776b}
+
+  .panel{
+    background:rgba(10,20,15,.7);border:1px solid #24382e;border-radius:14px;
+    padding:16px;margin-top:4px;min-height:80px;display:flex;align-items:center;
+  }
+  .hint{color:var(--dim);font-size:13px;margin-right:auto;display:flex;gap:16px;flex-wrap:wrap}
+  .hint b{color:#eaf2ec}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%}
+  button{
+    font:inherit;font-weight:600;border:none;border-radius:9px;padding:11px 18px;cursor:pointer;
+    color:#0d1411;background:#cdd7d0;transition:transform .05s,filter .15s;
+  }
+  button:hover{filter:brightness(1.08)} button:active{transform:translateY(1px)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  .b-fold{background:#d9776b;color:#1a0c0a}
+  .b-call{background:#7fc99a;color:#0a1a10}
+  .b-raise{background:var(--gold);color:#2a1d05}
+  .b-deal{background:var(--gold);color:#2a1d05;padding:12px 24px}
+  .sizing{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto}
+  .sizing input[type=number]{width:84px;padding:9px;border-radius:8px;border:1px solid #2c4438;background:#0d1c15;color:#eaf2ec;font:inherit;-moz-appearance:textfield;appearance:textfield}
+  /* explicit −/+ steppers: iOS/iPadOS Safari hides the native number spinners, so give
+     every platform one clickable (trackpad-friendly) increment control instead. */
+  .sizing .stepgrp{display:inline-flex;align-items:stretch}
+  .sizing .step{background:#274034;color:#cfe6d8;font-size:18px;line-height:1;padding:9px 14px;min-width:44px}
+  .sizing .stepgrp .step:first-child{border-radius:8px 0 0 8px}
+  .sizing .stepgrp .step:last-child{border-radius:0 8px 8px 0}
+  .sizing .stepgrp input[type=number]{width:64px;border-radius:0;text-align:center}
+  .sizing input[type=number]::-webkit-inner-spin-button,
+  .sizing input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+  .quick{background:#274034;color:#cfe6d8;padding:8px 12px;font-size:13px}
+  input[type=range]{width:160px;accent-color:var(--gold)}
+
+  /* player modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(4,10,7,.66);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal-bg.open{display:flex}
+  .modal-card{background:#10201a;border:1px solid #2c4438;border-radius:14px;padding:22px 24px;width:min(360px,92vw);position:relative;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .modal-card h3{color:var(--gold);margin-bottom:4px}
+  .modal-x{position:absolute;top:10px;right:10px;background:transparent;color:var(--dim);padding:4px 8px}
+  /* settings (gear + the on/off rows — the segmented toggle mirrors the .speed control) */
+  .gearbtn{background:transparent;color:var(--dim);font-size:16px;padding:2px 6px;line-height:1;align-self:center}
+  .gearbtn:hover{color:var(--gold)}
+  .set-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:13px 0;border-top:1px solid #1c3329}
+  .set-row:first-child{border-top:none}
+  .set-row .lbl{color:#eef3ec;font-size:14px;font-weight:600}
+  .set-row .desc{color:var(--dim);font-size:12px;line-height:1.45;margin-top:3px;max-width:230px}
+  .set-row .desc code{color:var(--gold);font-size:11px}
+  .seg{display:flex;gap:4px;flex-shrink:0}
+  .seg button{padding:5px 13px;font-size:12px;font-weight:600;background:#1a2a22;color:var(--dim);border:1px solid #2c4438;border-radius:7px}
+  .seg button.on{background:var(--gold);color:#2a1d05;border-color:var(--gold)}
+  .seg button:disabled{opacity:.5;cursor:default}
+  /* BYO-API-key panel (metered worker) — a full-width block, not a right-aligned .set-row control */
+  .keyrow{display:block;padding:13px 0;border-top:1px solid #1c3329}
+  .keyrow .lbl{color:#eef3ec;font-size:14px;font-weight:600}
+  .keyrow .desc{color:var(--dim);font-size:12px;line-height:1.45;margin:3px 0 9px;max-width:340px}
+  .keyrow .desc code{color:var(--gold);font-size:11px}
+  .keyctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .keyctl input{flex:1 1 170px;min-width:0;padding:8px 10px;font-size:16px;background:#0e1a14;color:#eef3ec;border:1px solid #2c4438;border-radius:7px;font-family:inherit}
+  .keyctl input::placeholder{color:#4d6657}
+  .keyctl button{padding:6px 13px;font-size:12px;font-weight:600;background:#1a2a22;color:#cfe6d8;border:1px solid #2c4438;border-radius:7px}
+  .keyctl button:disabled{opacity:.5;cursor:default}
+  .keymsg{color:var(--dim);font-size:11px;margin-top:7px;min-height:14px}
+  .keymsg.err{color:#d9776b}
+  .set-sec{color:var(--gold);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-top:14px;padding-top:12px;border-top:1px solid #1c3329}
+  .set-sec span{color:var(--dim);text-transform:none;letter-spacing:.3px;font-weight:400}
+  /* ── settings modal: a scroll-contained flex shell (first-principles redesign, research-grounded) ── */
+  .modal-card.settings-modal{
+    display:flex; flex-direction:column;
+    width:min(460px,94vw);
+    max-height:88vh; max-height:88dvh;   /* dvh where supported, vh fallback — NEVER exceed the viewport */
+    overflow:hidden;                      /* the scroll lives in .settings-body, not the whole card */
+    padding:0;                            /* head + body pad themselves so the scrollbar hugs the card edge */
+  }
+  .settings-head{                         /* fixed header — title + ✕ stay reachable while the body scrolls */
+    flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:15px 22px 12px; border-bottom:1px solid #1c3329;
+  }
+  .settings-head h3{margin:0}
+  .settings-head .modal-x{position:static; padding:6px 10px; font-size:15px}
+  .settings-body{
+    flex:1 1 auto; min-height:0;          /* ★ min-height:0 is what lets a flex child actually scroll */
+    overflow-y:auto; overscroll-behavior:contain;
+    padding:4px 22px 20px;
+  }
+  /* a WIDE control (3–4 option segmented) stacks: label/desc on top, control full-width below */
+  .set-row.stack{flex-direction:column; align-items:stretch; gap:9px}
+  .set-row.stack .desc{max-width:none}
+  .seg.full{display:flex; width:100%; gap:5px}
+  .seg.full button{flex:1 1 0; min-width:0; padding:9px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  /* the metered sub-settings (key + model + effort) nest under Provider — a subtle inset group */
+  .subgroup{padding:0 0 2px 12px; border-left:2px solid #2c4438}
+  .subgroup .keyrow:first-child, .subgroup .set-row:first-child{border-top:none}
+  /* mobile: full-screen sheet under 600px (the research threshold) */
+  @media(max-width:600px){
+    .modal-card.settings-modal{width:100%; max-width:100%; height:100dvh; max-height:100dvh; border-radius:0}
+  }
+  .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:14px 0}
+  .statgrid .k{color:var(--dim);font-size:12px}
+  .statgrid .v{font-weight:600;font-size:16px}
+  .reveal-box{margin-top:8px;padding:12px;background:rgba(232,195,114,.08);border:1px solid #4a3d1f;border-radius:9px;color:#f1e3c2;font-size:13px;display:none}
+  .reveal-box.show{display:block}
+  .reveal-box b{color:var(--gold)}
+
+  /* lobby (between sit-downs) */
+  .lobby{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .lobby .bk{font-size:46px;font-weight:800;color:var(--gold);letter-spacing:.5px;line-height:1}
+  .lobby .bk-l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:2px}
+  .lobby .lt{font-size:12px;color:#cfe6d8;margin-top:10px}
+
+  /* report + career modals (wider than the player modal) */
+  .modal-card.wide{width:min(540px,94vw);max-height:88vh;overflow-y:auto}
+  .net-big{font-size:34px;font-weight:800;letter-spacing:.5px;margin:2px 0 2px}
+  .net-big.pos{color:#7fe0a8} .net-big.neg{color:#d9776b}
+  .rowgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;margin:12px 0}
+  .rowgrid .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .rowgrid .v{font-weight:600;font-size:17px}
+  .sect{margin-top:16px;border-top:1px solid #24382e;padding-top:12px}
+  .sect h4{color:var(--gold);font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .vrow,.hrow{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .vrow .arch{color:var(--gold);font-size:12px}
+  .vrow .vstats{color:var(--dim);font-size:11px}
+  .amt-pos{color:#7fe0a8;font-weight:600} .amt-neg{color:#d9776b;font-weight:600}
+  .chart{background:rgba(8,18,13,.5);border:1px solid #24382e;border-radius:9px;padding:8px;margin:8px 0}
+  .danger{background:#3a201c;color:#e6a79c;border:1px solid #6e3a30;font-size:12px;padding:7px 12px}
+  .lobby-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%}
+
+  /* read-accuracy trend (the felt-sense calibration arc) */
+  .reads-head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:8px 0 2px}
+  .reads-rate{font-size:40px;font-weight:800;letter-spacing:.5px;font-variant-numeric:tabular-nums}
+  .reads-rate.hot{color:#7fe0a8} .reads-rate.warm{color:#e8c372} .reads-rate.cool{color:#d9776b}
+  .reads-rate.none{color:var(--dim);font-size:22px}
+  .reads-cap{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:1.5px}
+  .dir{font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;letter-spacing:.4px;width:max-content}
+  .dir.sharpening{background:rgba(127,224,168,.14);color:#7fe0a8;border:1px solid #2f5a45}
+  .dir.holding{background:rgba(232,195,114,.12);color:#e8c372;border:1px solid #4a3d1f}
+  .dir.drifting{background:rgba(217,119,107,.12);color:#d9776b;border:1px solid #6e3a30}
+  .reads-sub{color:var(--dim);font-size:13px;margin-top:3px}
+  .reads-modeled{opacity:.74}
+  .reads-modeled .reads-rate{font-size:26px}
+
+  /* coach panel (Slice 1) */
+  #coachpanel{display:none;width:100%;margin-top:8px;
+    background:linear-gradient(180deg,rgba(232,195,114,.09),rgba(10,20,15,.78));
+    border:1px solid #4a3d1f;border-radius:14px;padding:13px 16px}
+  .coachhdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;gap:10px}
+  .coachlbl{color:var(--gold);font-weight:700;font-size:13px;letter-spacing:.4px}
+  .coachbody{font-size:14px;line-height:1.55;color:#eef3ec}
+  .coachbody .thinking{color:var(--dim);font-style:italic}
+  .coachx{background:transparent;color:var(--dim);padding:3px 9px;font-size:13px}
+  .ask-flow{background:#2c2611;color:var(--gold);border:1px solid #6a5a2a}
+  .ask-flow:hover{filter:brightness(1.18)}
+  .b-review{background:#243a30;color:#cfe6d8;font-size:11px;padding:5px 10px;margin-left:8px;border-radius:7px}
+
+  /* prediction-error drill (Slice 3) — commit your read, then see the exact equity */
+  #drillpanel{display:none;width:100%;margin-top:8px;
+    background:linear-gradient(180deg,rgba(127,224,168,.10),rgba(10,20,15,.82));
+    border:1px solid #2f5a45;border-radius:14px;padding:15px 18px}
+  .drill-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px;gap:10px}
+  .drill-hd .lbl{color:#7fe0a8;font-weight:700;font-size:13px;letter-spacing:.4px}
+  .drill-hd .step{color:var(--dim);font-size:12px;text-align:right}
+  .drill-spot{display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap;margin-bottom:13px}
+  .drill-spot .grp{display:flex;flex-direction:column;gap:5px}
+  .drill-spot .cap{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+  .drill-cards{display:flex;gap:5px;min-height:54px}
+  .drill-q{font-size:14px;color:#eef3ec;margin-bottom:9px}
+  .drill-slider{display:flex;align-items:center;gap:16px;margin-bottom:13px}
+  .drill-slider input[type=range]{flex:1;width:auto;accent-color:#7fe0a8}
+  .drill-pct{font-size:30px;font-weight:800;color:var(--gold);min-width:84px;text-align:right;font-variant-numeric:tabular-nums}
+  .drill-lean{display:flex;gap:8px;margin-bottom:14px}
+  .drill-lean button{background:#1c3328;color:#cfe6d8;border:1px solid #2f5a45;padding:8px 18px;font-size:13px;border-radius:8px}
+  .drill-lean button.on{background:#2f5a45;color:#fff;border-color:#7fe0a8}
+  .drill-commit{background:#2c2611;color:var(--gold);border:1px solid #6a5a2a;padding:10px 20px;font-weight:600;border-radius:8px}
+  .drill-commit:hover{filter:brightness(1.18)}
+  .drill-commit:disabled{opacity:.4;cursor:default}
+  /* optional prose read-note — the read in the player's OWN words (often sharper than the digit) */
+  .drill-note{width:100%;box-sizing:border-box;background:#16241d;color:#cfe6d8;border:1px solid #2f5a45;
+    border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;line-height:1.4;resize:vertical;
+    min-height:38px;margin-bottom:13px}
+  .drill-note::placeholder{color:#5f7a6c}
+  .drill-note:focus{outline:none;border-color:#7fe0a8}
+  .drill-note:disabled{opacity:.55}
+  /* the live beat fires every decision → the note is COLLAPSED behind a light toggle (no per-decision weight) */
+  .drill-note-toggle{background:none;border:none;color:#7f99a8;font-size:12px;cursor:pointer;padding:2px 0;letter-spacing:.3px}
+  .drill-note-toggle:hover{color:#9fd0c0}
+  .drill-note-toggle:disabled{opacity:.4;cursor:default}
+  .drill-reveal{display:none;margin-top:6px;padding:13px 15px;border-radius:10px;border:1px solid}
+  .drill-reveal.show{display:block}
+  .drill-reveal .big{font-size:15px;font-weight:700;margin-bottom:8px;color:#f1f5ef}
+  .drill-reveal .row{display:flex;gap:26px;align-items:flex-start;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px;flex-wrap:wrap}
+  .drill-reveal .row b{font-size:17px;font-weight:800;display:block;margin-top:2px;text-transform:none;letter-spacing:0}
+  .drill-reveal .eqpct{display:block;font-size:12px;color:var(--dim);font-weight:600;text-transform:none;letter-spacing:0}
+  .drill-reveal.good{background:rgba(127,224,168,.10);border-color:#2f5a45}
+  .drill-reveal.warn{background:rgba(217,119,107,.12);border-color:#6e3a30}
+  .drill-reveal.mid{background:rgba(232,195,114,.10);border-color:#4a3d1f}
+  .drill-reveal .did{color:var(--dim);font-size:12px;margin-bottom:11px}
+  .drill-next{background:#243a30;color:#cfe6d8;border:1px solid #2f5a45;padding:8px 18px;border-radius:8px}
+
+  /* ◆ range-collapse — the SECOND read-skill (modeled → the cards): a DISTINCT violet identity from
+     the green ♠ live ding, so range-READING and range-COLLAPSE-spotting never fuse (hand6 disentangle). */
+  #collapsecard{display:none;width:100%;margin-top:8px;
+    background:linear-gradient(180deg,rgba(185,163,239,.12),rgba(12,15,24,.84));
+    border:1px solid #473a6b;border-radius:14px;padding:14px 17px}
+  #collapsecard.show{display:block}
+  .collapse-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;gap:10px}
+  .collapse-hd .lbl{color:var(--collapse);font-weight:700;font-size:13px;letter-spacing:.4px}
+  .collapse-hd .step{color:var(--dim);font-size:12px;text-align:right}
+  .collapse-big{font-size:15px;font-weight:700;margin-bottom:10px;color:#f1f5ef;line-height:1.45}
+  .collapse-row{display:flex;gap:16px;align-items:flex-start;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;flex-wrap:wrap}
+  .collapse-row b{font-size:16px;font-weight:800;display:block;margin-top:2px;text-transform:none;letter-spacing:0;color:#eaf2ec}
+  .collapse-row .eqpct{display:block;font-size:12px;color:var(--dim);font-weight:600;text-transform:none;letter-spacing:0}
+  .collapse-row .arrow{color:var(--collapse);font-size:17px;font-weight:700;align-self:center}
+  @media (max-width:440px){ .collapse-row .arrow{display:none} }   /* narrow: drop arrows, rely on order */
+  .collapse-did{color:var(--dim);font-size:12px;margin-bottom:11px;line-height:1.5}
+  .collapse-did b{color:#cdc2ef}
+  .collapse-next{background:#2a2440;color:#cdc2ef;border:1px solid #473a6b;padding:8px 18px;border-radius:8px}
+  .collapse-next:hover{filter:brightness(1.18)}
+  .reads-collapse h4{color:var(--collapse)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>♠ gutcheck ♥</h1>
+    <span class="meta" id="meta">loading…</span>
+    <span class="meta" id="herostack"></span>
+    <span class="speed" id="speedctl"></span>
+    <button class="gearbtn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <div class="table-area">
+    <div class="felt"></div>
+    <div class="center">
+      <div class="board" id="board"></div>
+      <div class="pot" id="pot"></div>
+      <div class="street" id="street"></div>
+    </div>
+    <div id="chips"></div>
+    <div id="seats"></div>
+    <div class="toast" id="toast" onclick="this.classList.remove('show')"></div>
+  </div>
+
+  <div class="panel"><div class="controls" id="panel"></div></div>
+  <div id="drillpanel"></div>
+  <div id="collapsecard"></div>
+  <div id="coachpanel"></div>
+</div>
+
+<div class="modal-bg" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <button class="modal-x" onclick="closeModal()">✕</button>
+    <h3 id="m-name"></h3>
+    <div class="meta" id="m-sub" style="color:var(--dim);font-size:12px"></div>
+    <div class="statgrid" id="m-stats"></div>
+    <button class="quick" id="m-reveal" onclick="revealType()">🔍 Reveal player type</button>
+    <div class="reveal-box" id="m-type"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="report" onclick="if(event.target===this)closeReport()">
+  <div class="modal-card wide">
+    <button class="modal-x" onclick="closeReport()">✕</button>
+    <h3>Session report</h3>
+    <div class="meta" id="r-sub" style="color:var(--dim);font-size:12px"></div>
+    <div id="r-err" style="color:#d9776b;font-size:12px;min-height:14px"></div>
+    <div id="r-body"></div>
+    <button class="b-deal" style="margin-top:14px" onclick="closeReport()">Back to lobby ▸</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="career" onclick="if(event.target===this)closeCareer()">
+  <div class="modal-card wide">
+    <button class="modal-x" onclick="closeCareer()">✕</button>
+    <h3>Career</h3>
+    <div id="c-body"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="reads" onclick="if(event.target===this)closeReads()">
+  <div class="modal-card wide">
+    <button class="modal-x" onclick="closeReads()">✕</button>
+    <h3>🎯 Read accuracy</h3>
+    <div class="meta" style="color:var(--dim);font-size:12px">how close your gut is to the truth — the felt-sense arc over time</div>
+    <div id="reads-body"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="settings" onclick="if(event.target===this)closeSettings()">
+  <div class="modal-card settings-modal">
+    <div class="settings-head">
+      <h3>⚙ Settings</h3>
+      <button class="modal-x" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="settings-body" id="settings-body"><div class="hint">loading…</div></div>
+  </div>
+</div>
+
+<script>
+const SUIT = {s:"♠",h:"♥",d:"♦",c:"♣"};
+const RED = {h:1,d:1};
+const ANCHORS = [
+  {l:50,t:90},{l:11,t:75},{l:11,t:31},{l:50,t:15},{l:89,t:31},{l:89,t:75}
+];
+const CENTER = {l:50, t:46};
+const TYPE_DESC = {
+  rock:"<b>The Nit</b> — ultra-tight. Plays only premiums, rarely bluffs, folds to pressure. <i>Exploit: steal relentlessly; fold when it finally wakes up.</i>",
+  reg:"<b>The TAG</b> — tight-aggressive. C-bets, value-bets, the occasional bluff. <i>Exploit: the toughest seat; play straightforward and pick your spots.</i>",
+  station:"<b>The Calling Station</b> — loose-passive. Calls too much, rarely raises or folds. <i>Exploit: value-bet thin and relentlessly; never bluff it.</i>",
+  hero:"<b>That's you.</b>"
+};
+let LASTVIEW = null, MODAL_TYPE = null, TOAST_TIMER = null, LAST_REPORT = null;
+// settings (fetched on boot + whenever the menu opens/toggles). COACHING_ON defaults true (the
+// common case) so the live UX reads right before the first fetch returns; factsOnly() is the
+// honest-relabel gate — true only when the BUILT-IN coach exists AND is toggled off (an external
+// worker, COACH_BUILT_IN=false, might still be coaching, so we don't relabel for it).
+let COACHING_ON = true, COACH_BUILT_IN = false;
+function factsOnly(){ return COACH_BUILT_IN && !COACHING_ON; }
+
+function cardEl(code, big){
+  const d = document.createElement("div");
+  if(!code){ d.className = "card back" + (big?" lg":""); d.textContent="?"; return d; }
+  const r = code[0], s = code[1];
+  d.className = "card" + (big?" lg":"") + (RED[s]?" red":"");
+  d.innerHTML = `<span class="r">${r==="T"?"10":r}</span><span>${SUIT[s]}</span>`;
+  return d;
+}
+async function api(path, body){
+  // METHOD ROUTING (get this right or a feature silently dies): a call WITH a body is always POST;
+  // a call with NO body is GET only if its path is listed below, else POST. So EVERY GET-only route
+  // (implemented only in do_GET) MUST have a prefix here — omit one and the no-body call routes to
+  // POST → 404 → the caller's .json() throws → swallowed (this is exactly how the read_reconciliation
+  // collapse surfaces silently 404'd until this prefix was added). Routes that always carry a body
+  // (/api/calibration/review, /api/read/commit, /api/settings POST) are safe without a prefix —
+  // the `body ?` branch forces their POST regardless. CONVERSE caveat: a listed prefix must have NO
+  // POST-only, no-body sub-path (a future no-body POST /api/settings/X would mis-route to GET→404);
+  // none exists today. (startsWith is required — these routes carry ?query strings, so === won't match.)
+  const isGet = path.startsWith("/api/state") || path.startsWith("/api/career") || path.startsWith("/api/coach/poll") || path.startsWith("/api/read/spot") || path.startsWith("/api/read_reconciliation") || path.startsWith("/api/calibration") || path.startsWith("/api/settings");
+  const opt = body ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}
+                    : {method: isGet?"GET":"POST"};
+  return (await fetch(path, opt)).json();
+}
+
+function openPlayer(p){
+  MODAL_TYPE = p.type;
+  document.getElementById("m-name").textContent = p.name + (p.is_hero?"  (you)":"");
+  document.getElementById("m-sub").textContent = p.position ? ("position: "+p.position) : "";
+  const st = p.stats || {};
+  const vpip = st.hands ? Math.round(100*st.vpip/st.hands) : 0;
+  const rows = [
+    ["Hands seen", st.hands||0],["VPIP", st.hands ? vpip+"%" : "—"],
+    ["Preflop raises", st.pf_raises||0],["Showdowns", st.showdowns||0],
+    ["Net at table", (st.net>0?"+":"")+(st.net||0)],["Hands won", st.wins||0],
+  ];
+  document.getElementById("m-stats").innerHTML = rows.map(r=>`<div class="k">${r[0]}</div><div class="v">${r[1]}</div>`).join("");
+  const tbox = document.getElementById("m-type"); tbox.className="reveal-box"; tbox.innerHTML="";
+  document.getElementById("m-reveal").style.display = p.is_hero ? "none" : "";
+  if(p.is_hero){ tbox.className="reveal-box show"; tbox.innerHTML=TYPE_DESC.hero; }
+  document.getElementById("modal").classList.add("open");
+}
+function revealType(){
+  const tbox=document.getElementById("m-type"); tbox.className="reveal-box show";
+  tbox.innerHTML=TYPE_DESC[MODAL_TYPE]||"Unknown.";
+  document.getElementById("m-reveal").style.display="none";
+}
+function closeModal(){ document.getElementById("modal").classList.remove("open"); }
+
+function chipAt(off, amount, isPot){
+  const a = isPot ? CENTER : ANCHORS[off];
+  // 0.5 toward the pot keeps chips clear of the badges (esp. top seats, whose
+  // badge content flows downward into the chip's old position)
+  const l = isPot ? CENTER.l : a.l + (CENTER.l - a.l)*0.56;
+  const t = isPot ? CENTER.t+14 : a.t + (CENTER.t - a.t)*0.56;
+  const c = document.createElement("div");
+  c.className = "chip" + (isPot?" pot":"");
+  c.style.left=l+"%"; c.style.top=t+"%"; c.textContent=amount;
+  return c;
+}
+
+function renderTable(t, isLive){
+  const seats=document.getElementById("seats"), board=document.getElementById("board"),
+        pot=document.getElementById("pot"), street=document.getElementById("street"),
+        chips=document.getElementById("chips");
+  seats.innerHTML=""; board.innerHTML=""; chips.innerHTML=""; pot.innerHTML=""; street.textContent="";
+  if(!t){ board.innerHTML='<div style="color:rgba(255,255,255,.25)">— no hand yet —</div>'; return; }
+
+  const bd = t.board||[];
+  bd.forEach((c,i)=>{ const el=cardEl(c,true); if(i>=(window._prevBoardLen||0)) el.classList.add("dealt"); board.appendChild(el); });
+  window._prevBoardLen = bd.length;
+  if(!bd.length){ const e=document.createElement("div"); e.style.color="rgba(255,255,255,.25)"; e.textContent="— preflop —"; board.appendChild(e); }
+  if(t.pot>0){ pot.appendChild(chipNode(t.pot,true)); }
+  pot.insertAdjacentHTML("beforeend", `<span>POT ${t.pot}</span>`);
+  if(t.street) street.textContent=t.street;
+
+  t.seats.forEach(s=>{
+    const off=((s.seat - t.hero_seat)%t.players_total + t.players_total)%t.players_total;
+    const a=ANCHORS[off];
+    const el=document.createElement("div");
+    el.className="seat"+(s.is_hero?" hero":"")+(s.is_actor?" actor":"")+(s.won?" winner":"")+(s.live?"":" folded");
+    el.style.left=a.l+"%"; el.style.top=a.t+"%";
+    el.dataset.seat = s.seat;
+    const cards = s.is_hero||s.hole ? (s.hole||[]) : (s.live ? [null,null] : []);
+    const dealer = s.position==="BTN" ? `<div class="dealer">D</div>` : "";
+    el.innerHTML=`<div class="badge">${dealer}
+        <div class="pos">${s.position}</div>
+        <div class="nm">${s.name}</div>
+        <div class="ty">${s.type_label}</div>
+        <div class="stk">${s.stack}</div>
+        <div class="cards"></div>
+        ${(s.is_hero||s.stats===undefined)?"":'<div class="tap">tap for stats</div>'}
+      </div>`;
+    const cwrap=el.querySelector(".cards"); cards.forEach(c=>cwrap.appendChild(cardEl(c,false)));
+    if(s.stats!==undefined) el.addEventListener("click", ()=>openPlayer(s));  // not on transient frame seats
+    seats.appendChild(el);
+    if(isLive && s.bet>0) chips.appendChild(chipAt(off, s.bet, false));
+  });
+}
+function chipNode(amount,isPot){ const c=document.createElement("div"); c.className="chip"+(isPot?" pot":""); c.style.position="static"; c.style.transform="none"; c.textContent=amount; return c; }
+
+function showToast(result){
+  const el=document.getElementById("toast");
+  if(!result){ el.classList.remove("show"); return; }
+  let nets = (result.net||[]).map(n=>`<span class="${n.amount>0?'pos-amt':'neg-amt'}">${n.name} ${n.amount>0?'+':''}${n.amount}</span>`).join(" · ");
+  let sd = (result.showdown||[]).length ? `<div class="net">showdown: ${result.showdown.map(s=>s.name+" "+s.hole.map(c=>(c[0]==="T"?"10":c[0])+SUIT[c[1]]).join("")).join(" · ")}</div>` : "";
+  el.innerHTML=`<h4>Hand over</h4><div class="net">${nets}</div>${sd}`;
+  el.classList.add("show");
+  clearTimeout(TOAST_TIMER);
+  TOAST_TIMER=setTimeout(()=>el.classList.remove("show"), 5000);
+}
+
+function render(v){
+  LASTVIEW=v;
+  syncCollapse(v);   // ◆ range-collapse: surface/clear the hand-end card (self-decides from v.over+session)
+  const meta=document.getElementById("meta"), hstk=document.getElementById("herostack"),
+        panel=document.getElementById("panel");
+  if(v.report) showReport(v.report);   // a get-up just completed
+
+  if(!v.seated){
+    meta.textContent="6-max cash · sit down to play";
+    hstk.textContent=`Bankroll ${v.bankroll}`;
+    renderLobby(v);
+    return;
+  }
+
+  meta.textContent=`Hand #${v.hand_no} · blinds ${v.blinds[0]}/${v.blinds[1]} · 6-max cash`;
+  const sr=v.session;
+  hstk.innerHTML=`Stack ${v.hero_stack!=null?v.hero_stack:'–'} · Bankroll ${v.bankroll}`+
+    (sr?` · <span style="color:${sr.net>=0?'#7fe0a8':'#d9776b'}">session ${sr.net>=0?'+':''}${sr.net} · ${sr.bb100} bb/100 · ${sr.hands}h${sr.reloads?` · ${sr.reloads} reload${sr.reloads>1?'s':''}`:''}</span>`:'');
+
+  if(v.in_hand){
+    showToast(null);
+    renderTable({seats:v.seats, board:v.board, pot:v.pot, hero_seat:v.hero_seat, players_total:v.players_total, street:v.street}, true);
+    if(v.to_act==="hero" && v.options){
+      const o=v.options, heroBet=(v.seats.find(x=>x.is_hero)||{}).bet||0, callAmt=o.call_amount, potNow=v.pot;
+      // null-safe bounds: can_raise should imply non-null, but never feed NaN to the slider
+      const minR=o.min_raise??0, maxR=o.max_raise??minR;
+      const fracTo=f=>Math.max(minR,Math.min(maxR,Math.round(heroBet+callAmt+f*(potNow+callAmt))));
+      let hint=`<div class="hint"><span>${v.hero.strength_hint||""}</span>`;
+      if(v.pot_odds) hint+=`<span>Pot odds: call <b>${v.pot_odds.call}</b> into <b>${v.pot_odds.pot}</b> → need <b>${v.pot_odds.breakeven_pct}%</b></span>`;
+      hint+=`</div>`;
+      const callLabel=o.is_check?"Check":`Call ${callAmt}`;
+      panel.innerHTML=hint+`
+        <button class="ask-flow" onclick="logRead()">Log read ♠</button>
+        ${o.fold?`<button class="b-fold" onclick="act('fold')">Fold</button>`:""}
+        ${o.check_or_call?`<button class="b-call" onclick="act('${o.is_check?'check':'call'}')">${callLabel}</button>`:""}
+        ${o.can_raise?`<div class="sizing">
+            <button class="quick" onclick="setR(${fracTo(0.5)})">½ pot</button>
+            <button class="quick" onclick="setR(${fracTo(0.66)})">⅔ pot</button>
+            <button class="quick" onclick="setR(${fracTo(1)})">Pot</button>
+            <button class="quick" onclick="setR(${maxR})">All-in</button>
+            <input type="range" id="rraw" min="${minR}" max="${maxR}" value="${fracTo(0.66)}" oninput="document.getElementById('rin').value=this.value">
+            <span class="stepgrp">
+              <button type="button" class="step" onclick="stepR(-1)" aria-label="decrease raise">−</button>
+              <input type="number" id="rin" min="${minR}" max="${maxR}" value="${fracTo(0.66)}" inputmode="numeric" oninput="document.getElementById('rraw').value=this.value">
+              <button type="button" class="step" onclick="stepR(1)" aria-label="increase raise">+</button>
+            </span>
+            <button class="b-raise" onclick="raise()">Raise to</button>
+          </div>`:""}`;
+    } else {
+      panel.innerHTML=`<div class="hint">Villains acting…</div>`;
+    }
+    return;
+  }
+
+  // between hands: keep the finished table on screen + self-clearing recap + controls
+  renderTable(v.table, false);
+  showToast(v.last_result);
+  if(v.hero_busted){
+    panel.innerHTML=`<span class="hint" style="color:#d9776b"><b>Busted.</b> Reload from bankroll, or get up and review the session.</span>`+
+      (v.can_reload?`<button class="b-raise" onclick="reload_()">Reload — buy in ${v.buyin}</button>`
+                   :`<span class="hint" style="color:#d9776b">bankroll empty</span>`)+
+      `<button class="quick" onclick="getup()">Get up</button>`;
+  } else {
+    panel.innerHTML=`<button class="b-deal" onclick="deal()">Deal next hand ▸</button>
+      <button class="quick" onclick="getup()" style="margin-left:6px">Get up</button>
+      <span class="hint" style="margin-left:14px">tap any player for their stats</span>`;
+  }
+}
+
+// ---- lobby + career + report ----
+function renderLobby(v){
+  renderTable(null,false);
+  const c=v.career||{}, lt=c.lifetime||{};
+  document.getElementById("board").innerHTML=`<div class="lobby">
+      <div class="bk">${v.bankroll}</div><div class="bk-l">bankroll</div>
+      ${lt.sessions?`<div class="lt">${lt.sessions} session${lt.sessions>1?'s':''} · ${lt.hands} hands · <b style="color:${lt.bb100>=0?'#7fe0a8':'#d9776b'}">${lt.bb100>=0?'+':''}${lt.bb100} bb/100</b> lifetime</div>`
+                   :`<div class="lt">no sessions yet — sit down to start your bankroll</div>`}
+    </div>`;
+  document.getElementById("pot").innerHTML=""; document.getElementById("street").textContent="";
+  const panel=document.getElementById("panel");
+  panel.innerHTML=`<div class="lobby-actions">`+
+    (v.can_sit?`<button class="b-deal" onclick="sit()">Sit down — buy in ${v.buyin} ▸</button>`
+              :`<span class="hint" style="color:#d9776b">Bankroll can't cover a ${v.buyin} buy-in.</span>`)+
+    `<button class="quick" onclick="openCareer()">📈 Career</button>`+
+    `<button class="quick" onclick="openReads()">🎯 Reads</button>`+
+    (v.can_sit?``:`<button class="danger" onclick="resetAll(event)">Reset bankroll</button>`)+
+    `</div>`;
+}
+
+function sparkline(hist,w=480,h=90){
+  if(!hist||hist.length<2) return `<div class="hint">play a few sessions to see your bankroll curve</div>`;
+  const vals=hist.map(p=>p.bankroll), mn=Math.min(...vals), mx=Math.max(...vals), rng=(mx-mn)||1;
+  const pts=hist.map((p,i)=>{const x=(i/(hist.length-1))*w, y=h-((p.bankroll-mn)/rng)*(h-8)-4; return `${x.toFixed(1)},${y.toFixed(1)}`;}).join(" ");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
+      <polyline points="${pts}" fill="none" stroke="#e8c372" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    </svg><div class="hint" style="justify-content:space-between"><span>${mn}</span><span>${mx}</span></div>`;
+}
+
+function moneyEl(n){ return `<span class="${n>=0?'amt-pos':'amt-neg'}">${n>=0?'+':''}${n}</span>`; }
+
+function showReport(r){
+  LAST_REPORT = r;   // kept so "Review with flow" can hide the modal and re-open it
+  const _re=document.getElementById("r-err"); if(_re) _re.textContent="";   // clear a stale error
+  document.getElementById("r-sub").textContent=`${r.id} · ${r.started.replace('T',' ')} → ${r.ended.slice(11)}`;
+  const reload=r.reloads?` · ${r.reloads} reload${r.reloads>1?'s':''}`:'';
+  const rbtn=p=>`<button class="b-review" onclick="reviewHand('${r.id}',${p.hand_no})">⟳ review</button>`;
+  const big=(r.biggest_pots||[]).slice(0,3).map(p=>
+    `<div class="hrow"><span>#${p.hand_no} · ${(p.board||[]).map(fmtCard).join(' ')||'preflop'}</span><span>pot ${p.pot} · you ${moneyEl(p.hero_net)}${rbtn(p)}</span></div>`).join("")||`<div class="hint">—</div>`;
+  const swings=(r.notable_hands||[]).slice(0,3).map(p=>
+    `<div class="hrow"><span>#${p.hand_no} · ${(p.board||[]).map(fmtCard).join(' ')||'preflop'}</span><span>you ${moneyEl(p.hero_net)} · pot ${p.pot}${rbtn(p)}</span></div>`).join("")||`<div class="hint">—</div>`;
+  const vil=(r.villains||[]).map(x=>{const st=x.stats||{}, vp=st.hands?Math.round(100*st.vpip/st.hands):0;
+    return `<div class="vrow"><span><b>${x.name}</b> <span class="arch">${x.archetype}</span></span>`+
+      `<span><span class="vstats">VPIP ${vp}% · ${st.showdowns||0} SD</span> &nbsp; ${moneyEl(st.net||0)}</span></div>`;}).join("");
+  document.getElementById("r-body").innerHTML=`
+    <div class="net-big ${r.net>=0?'pos':'neg'}">${r.net>=0?'+':''}${r.net}</div>
+    <div class="rowgrid">
+      <div><div class="k">bought in</div><div class="v">${r.invested}${reload}</div></div>
+      <div><div class="k">cashed out</div><div class="v">${r.cashout}</div></div>
+      <div><div class="k">bb / 100</div><div class="v" style="color:${r.bb100>=0?'#7fe0a8':'#d9776b'}">${r.bb100}</div></div>
+      <div><div class="k">hands</div><div class="v">${r.hands}</div></div>
+      <div><div class="k">your VPIP</div><div class="v">${r.hero.vpip}%</div></div>
+      <div><div class="k">your AF</div><div class="v">${r.hero.af}</div></div>
+    </div>
+    <div class="sect"><h4>How they actually played (vs your reads)</h4>${vil}</div>
+    <div class="sect"><h4>Biggest pots</h4>${big}</div>
+    <div class="sect"><h4>Your biggest swings</h4>${swings}</div>`;
+  document.getElementById("report").classList.add("open");
+}
+function closeReport(){
+  // a review whose /api/coach/ask is still in flight has REVIEW_SHOWN=false but is about to commit —
+  // supersede it (bump the epoch so reviewHand's post-await guard returns) instead of letting it fire
+  // on a report the player just closed.
+  if(REVIEW_PENDING){ COACH_GEN++; REVIEW_PENDING=false; abortDrill(); }
+  document.getElementById("report").classList.remove("open");
+  if(REVIEW_SHOWN) restoreView();
+}
+function alertReport(msg){ const e=document.getElementById("r-err"); if(!e)return; e.textContent=msg; setTimeout(()=>{ if(e.textContent===msg) e.textContent=""; }, 4000); }
+
+async function openCareer(){
+  const c=await api("/api/career"); const lt=c.lifetime||{};
+  const sess=(c.sessions||[]).map(s=>
+    `<div class="hrow"><span>${s.started.slice(5,16).replace('T',' ')} · ${s.hands}h</span>`+
+    `<span>${s.bb100>=0?'+':''}${s.bb100} bb/100 &nbsp; ${moneyEl(s.net)}</span></div>`).join("")||`<div class="hint">no sessions yet</div>`;
+  document.getElementById("c-body").innerHTML=`
+    <div class="net-big" style="color:var(--gold)">${c.bankroll}</div>
+    <div class="bk-l" style="color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:2px">bankroll</div>
+    <div class="chart">${sparkline(c.history)}</div>
+    <div class="rowgrid">
+      <div><div class="k">lifetime net</div><div class="v">${moneyEl(lt.net||0)}</div></div>
+      <div><div class="k">bb / 100</div><div class="v" style="color:${(lt.bb100||0)>=0?'#7fe0a8':'#d9776b'}">${lt.bb100||0}</div></div>
+      <div><div class="k">hands</div><div class="v">${lt.hands||0}</div></div>
+      <div><div class="k">sessions</div><div class="v">${lt.sessions||0}</div></div>
+      <div><div class="k">winning %</div><div class="v">${lt.winrate||0}%</div></div>
+    </div>
+    <div class="sect"><h4>Recent sessions</h4>${sess}</div>
+    <div class="sect"><button class="danger" onclick="resetAll(event)">Reset everything (bankroll + history)</button></div>`;
+  document.getElementById("career").classList.add("open");
+}
+function closeCareer(){ document.getElementById("career").classList.remove("open"); }
+
+// ---- settings (the cost×latency×fidelity menu — coaching on/off today) ----
+// a segmented On/Off-style control: opts = [{label, on, click}] → the .seg block (matches .speed)
+function segHtml(opts, cls){
+  // cls "full" → a full-width, equal-flex segmented control (for 3–4 wide options that must fill the row,
+  // not overflow it). Bare → the compact inline control (binary toggles in a label-left/control-right row).
+  // An opt with disabled:true renders a non-clickable, dimmed segment (.seg button:disabled — for a dial
+  // that has no effect on the current selection, e.g. the effort dial under Haiku, which ignores effort).
+  return `<div class="seg${cls?' '+cls:''}">`+opts.map(o=>`<button class="${o.on?'on':''}"${o.disabled?' disabled':''} onclick="${o.disabled?'':o.click}">${o.label}</button>`).join("")+`</div>`;
+}
+// escape server-derived strings before interpolating into innerHTML — the right primitive on the
+// credential-adjacent key panel (the key hint is last-4 of an sk-ant-… key so HTML metachars are
+// implausible, but unescaped injection is the wrong default to ship on a secrets surface — L3).
+function escHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function renderSettings(s){
+  COACHING_ON = !!s.coaching_enabled; COACH_BUILT_IN = !!s.coach_built_in;
+  const on = COACHING_ON;
+  const coachCtl = COACH_BUILT_IN
+    ? segHtml([{label:"On",on:on,click:"setCoaching(true)"},{label:"Off",on:!on,click:"setCoaching(false)"}])
+    : `<div class="seg"><button disabled>external</button></div>`;
+  const desc = !COACH_BUILT_IN
+    ? "Built-in coach off at launch (<code>--no-coach</code>) — an external worker owns coaching. Restart without it to toggle here."
+    : on ? "AI coaching on each read — falls back to the facts floor if the coach is offline."
+         : "Facts only — band, equity, pot odds, your read. No AI prose, zero cost.";
+  // coach provider (slice c + the openai metered worker): which AI worker runs the built-in coach — only
+  // meaningful when the built-in worker is up (external-worker installs choose their provider in their own
+  // worker). FOUR providers: two OAuth subscriptions (Claude / Codex, no key) + two metered BYO-key
+  // vendors (Anthropic key / OpenAI key). The two metered ones each carry their OWN model+effort+key.
+  const prov = s.coach_provider || "claude";
+  const metered = prov === "anthropic_api" || prov === "openai_api";
+  const vendor = prov === "openai_api" ? "openai" : "anthropic";   // which BYO key/dials this metered prov uses
+  const provRow = COACH_BUILT_IN ? `
+    <div class="set-sec">Coach provider</div>
+    <div class="set-row stack">
+      <div><div class="lbl">Provider</div><div class="desc">which AI runs the coach — your Claude or Codex login, or a metered Anthropic / OpenAI API key.</div></div>
+      ${segHtml([{label:"Claude",on:prov==="claude",click:"setStat('coach_provider','claude')"},
+                 {label:"Codex",on:prov==="codex",click:"setStat('coach_provider','codex')"},
+                 {label:"Anthropic key",on:prov==="anthropic_api",click:"setStat('coach_provider','anthropic_api')"},
+                 {label:"OpenAI key",on:prov==="openai_api",click:"setStat('coach_provider','openai_api')"}], "full")}
+    </div>` : "";
+  // the BYO-key panel — only when the built-in worker is up AND a metered provider is selected. Vendor-aware:
+  // the status (set/hint/source) rides in on /api/settings (api_key for anthropic, openai_key for openai); the
+  // KEY itself only ever goes OUT via /api/secrets and never comes back. The save/clear target vendor is read
+  // from the input's OWN data-vendor (stamped below) — NOT a mutable global — so the key and its destination
+  // come from one atomic rendered unit and can't desync mid provider-switch (L3 nemotron+complement). An
+  // env-provided key is read-only (clear can't unset it).
+  const vLabel = vendor === "openai" ? "OpenAI" : "Anthropic";
+  const vEnv = vendor === "openai" ? "GUTCHECK_OPENAI_API_KEY" : "GUTCHECK_ANTHROPIC_API_KEY";
+  const vPlaceholder = vendor === "openai" ? "sk-..." : "sk-ant-...";
+  const ksRaw = vendor === "openai" ? s.openai_key : s.api_key;
+  const ks = (ksRaw && typeof ksRaw === "object") ? ksRaw : {set:false, hint:"", source:""};
+  const hint = escHtml(ks.hint || "");          // escaped — never raw-interpolate a key-derived string
+  const keyDesc = !ks.set
+    ? `Paste your ${vLabel} API key — metered, billed per coach call (no Claude/Codex subscription needed). Stored locally, owner-only; never shown again.`
+    : ks.source === "env"
+      ? `Loaded from <code>${vEnv}</code> (${hint}). Unset that env var to remove it.`
+      : `Key stored (${hint}). Each coach call bills your ${vLabel} account. Save a new key to replace it.`;
+  // the metered worker's cost×fidelity dials (only shown with a metered provider). Model = the cost lever;
+  // Effort = the depth lever. PER-VENDOR: anthropic reads api_model/api_effort, openai reads openai_model/
+  // openai_effort — so switching provider never strands the other vendor's id. Effort is capability-gated on
+  // Anthropic (Haiku 4.5 rejects it); all offered gpt-5 tiers take reasoning_effort, so it's never gated there.
+  let modelCtl, effortCtl, modelDesc, effortDesc;
+  if (vendor === "openai") {
+    const m = s.openai_model || "gpt-5.5";
+    const e = s.openai_effort || "low";
+    // no effortCapable gate: gpt-5.5 / 5.4 / 5.4-mini all support the SAME reasoning_effort set
+    // (none/low/medium/high/xhigh) — unlike Anthropic Haiku, which rejects effort outright.
+    modelCtl = segHtml([{label:"GPT-5.5",on:m==="gpt-5.5",click:"setStat('openai_model','gpt-5.5')"},
+                        {label:"GPT-5.4",on:m==="gpt-5.4",click:"setStat('openai_model','gpt-5.4')"},
+                        {label:"5.4-mini",on:m==="gpt-5.4-mini",click:"setStat('openai_model','gpt-5.4-mini')"}], "full");
+    effortCtl = segHtml([{label:"None",on:e==="none",click:"setStat('openai_effort','none')"},
+                         {label:"Low",on:e==="low",click:"setStat('openai_effort','low')"},
+                         {label:"Med",on:e==="medium",click:"setStat('openai_effort','medium')"},
+                         {label:"High",on:e==="high",click:"setStat('openai_effort','high')"},
+                         {label:"XHigh",on:e==="xhigh",click:"setStat('openai_effort','xhigh')"}], "full");
+    modelDesc = "GPT-5.5 sharpest · 5.4-mini cheapest — your cost call.";
+    effortDesc = "Reasoning effort per read: None (no reasoning, fastest/cheapest) → Low → Med → High → XHigh (deepest — most tokens, most latency).";
+  } else {
+    const m = s.api_model || "claude-opus-4-8";
+    const e = s.api_effort || "low";
+    const effortCapable = m !== "claude-haiku-4-5";   // Haiku 4.5 rejects the effort dial
+    const xhighOk = m === "claude-opus-4-8" || m === "claude-opus-4-7";  // xhigh is Opus-4.7+ only (sync w/ coach_daemon._XHIGH_EFFORT_MODELS)
+    // The EFFECTIVE level to light. Haiku ignores effort entirely → light NOTHING (the dial is disabled below),
+    // never a false "High". On an effort-capable non-Opus model a persisted xhigh degrades to high in the worker
+    // → light "High". Round-trip: a pure model SWITCH preserves the stored xhigh (api_effort untouched), so
+    // switching back to Opus restores XHigh; an explicit click on a non-Opus segment sets THAT level (expected).
+    const shownEff = !effortCapable ? null : ((xhighOk || e !== "xhigh") ? e : "high");
+    modelCtl = segHtml([{label:"Opus",on:m==="claude-opus-4-8",click:"setStat('api_model','claude-opus-4-8')"},
+                        {label:"Sonnet",on:m==="claude-sonnet-4-6",click:"setStat('api_model','claude-sonnet-4-6')"},
+                        {label:"Haiku",on:m==="claude-haiku-4-5",click:"setStat('api_model','claude-haiku-4-5')"}], "full");
+    // Haiku's segments render DISABLED (dimmed, non-clickable) — the dial has no effect there, so don't invite
+    // a click that silently writes a setting the worker ignores.
+    const mkEff = (label, val) => ({label, on:shownEff===val, disabled:!effortCapable, click:`setStat('api_effort','${val}')`});
+    const apiEffSegs = [mkEff("Low","low"), mkEff("Med","medium"), mkEff("High","high")];
+    if (xhighOk) apiEffSegs.push(mkEff("XHigh","xhigh"));
+    effortCtl = segHtml(apiEffSegs, "full");
+    modelDesc = "Opus sharpest · Haiku cheapest — your cost call.";
+    effortDesc = !effortCapable
+      ? "Haiku 4.5 ignores the effort dial — it runs at its native speed regardless."
+      : xhighOk
+        ? "How hard the coach thinks per read — Low is fastest/cheapest, High a deep read, XHigh the deepest (Opus only; most tokens, most latency)."
+        : "How hard the coach thinks per read — Low is fastest/cheapest, High the deepest read (XHigh is Opus-only).";
+  }
+  const keySection = (COACH_BUILT_IN && metered) ? `
+    <div class="subgroup">
+      <div class="keyrow">
+        <div class="lbl">${vLabel} API key</div>
+        <div class="desc">${keyDesc}</div>
+        <div class="keyctl">
+          <input id="api-key-input" data-vendor="${vendor}" type="password" placeholder="${vPlaceholder}" autocomplete="off" spellcheck="false">
+          <button onclick="saveApiKey()">Save</button>
+          ${ks.set && ks.source !== "env" ? `<button class="danger" onclick="clearApiKey()">Clear</button>` : ""}
+        </div>
+        <div id="api-key-msg" class="keymsg"></div>
+      </div>
+      <div class="set-row stack"><div><div class="lbl">Model</div><div class="desc">${modelDesc}</div></div>${modelCtl}</div>
+      <div class="set-row stack"><div><div class="lbl">Effort</div><div class="desc">${effortDesc}</div></div>${effortCtl}</div>
+    </div>` : "";
+  // facts-floor stat-tailoring (slice b): which grounding facts the floor shows — you set your own.
+  const eqCtl = segHtml([{label:"Band",on:s.equity_format==="band",click:"setStat('equity_format','band')"},
+                         {label:"Band + %",on:s.equity_format==="band_pct",click:"setStat('equity_format','band_pct')"}]);
+  const potCtl = segHtml([{label:"On",on:!!s.show_pot_odds,click:"setStat('show_pot_odds',true)"},
+                          {label:"Off",on:!s.show_pot_odds,click:"setStat('show_pot_odds',false)"}]);
+  const readCtl = segHtml([{label:"On",on:!!s.show_observed_read,click:"setStat('show_observed_read',true)"},
+                           {label:"Off",on:!s.show_observed_read,click:"setStat('show_observed_read',false)"}]);
+  document.getElementById("settings-body").innerHTML=`
+    <div class="set-row">
+      <div><div class="lbl">Coaching</div><div class="desc">${desc}</div></div>
+      ${coachCtl}
+    </div>
+    ${provRow}
+    ${keySection}
+    <div class="set-sec">Facts shown <span>— after a read</span></div>
+    <div class="set-row"><div class="lbl">Equity</div>${eqCtl}</div>
+    <div class="set-row"><div class="lbl">Pot odds</div>${potCtl}</div>
+    <div class="set-row"><div class="lbl">Observed read</div>${readCtl}</div>`;
+}
+async function openSettings(){
+  document.getElementById("settings").classList.add("open");
+  document.getElementById("settings-body").innerHTML=`<div class="hint">loading…</div>`;
+  try{ renderSettings(await api("/api/settings")); }
+  catch(e){ document.getElementById("settings-body").innerHTML=`<div class="hint" style="color:#d9776b">⚠ couldn't load settings — is the server up?</div>`; }
+}
+function closeSettings(){ document.getElementById("settings").classList.remove("open"); }
+async function setCoaching(on){
+  // disable the toggle during the round-trip so a rapid double-click can't fire two POSTs; then
+  // re-render from the server's AUTHORITATIVE payload (never assume the write took — the server is
+  // the source of truth; renderSettings rebuilds the .seg block fresh + re-enabled).
+  document.querySelectorAll("#settings-body .seg button").forEach(b=>b.disabled=true);
+  try{
+    const s = await api("/api/settings",{coaching_enabled:on});
+    if(!s || typeof s.coaching_enabled !== "boolean") throw new Error("bad settings payload");  // a 4xx {error}
+    renderSettings(s);                                  // body would else render a false --no-coach view
+    // a live drill reveal's "talk it through ♠"/"show the facts ♠" button is rendered ONCE and a
+    // settings toggle does NOT re-render it — patch it here so the honest label can't go stale when
+    // coaching is flipped mid-reveal (the click-time spinner already re-checks factsOnly()).
+    const btn=document.getElementById("talk-btn");
+    if(btn && !btn.disabled) btn.textContent = factsOnly()?"show the facts ♠":"talk it through ♠";
+  }
+  catch(e){ document.querySelectorAll("#settings-body .seg button").forEach(b=>b.disabled=false); }  // transient — let the user retry
+}
+async function setStat(key, val){
+  // facts-floor stat-tailoring (slice b): write the one key, re-render from the authoritative payload.
+  // No talk-btn relabel needed — stat prefs change the facts CONTENT (regenerated on the next ask), not
+  // the button's facts-vs-coaching identity.
+  document.querySelectorAll("#settings-body .seg button").forEach(b=>b.disabled=true);
+  try{
+    const s = await api("/api/settings",{[key]:val});
+    if(!s || typeof s.coaching_enabled !== "boolean") throw new Error("bad settings payload");  // 4xx {error} guard
+    renderSettings(s);
+  }
+  catch(e){ document.querySelectorAll("#settings-body .seg button").forEach(b=>b.disabled=false); }  // transient — let the user retry
+}
+// ---- BYO API key (metered worker) ----
+// Save: POST the key to /api/secrets (it carries a body → POST), then re-render from the AUTHORITATIVE
+// /api/settings payload (now api_key.set=true). The key goes OUT only; the response is the safe status,
+// never the key. On a 400 the body is {error} (fetch doesn't reject on 4xx) → surface it inline.
+async function saveApiKey(){
+  const inp = document.getElementById("api-key-input");
+  const msg = document.getElementById("api-key-msg");
+  const key = ((inp && inp.value) || "").trim();
+  const setMsg=(t,err)=>{ if(msg){ msg.textContent=t; msg.classList.toggle("err",!!err); } };
+  if(!key){ setMsg("Paste a key first.",true); return; }
+  const vendor = (inp && inp.dataset.vendor) || "anthropic";   // the vendor of the SAME input the key came from
+  document.querySelectorAll("#settings-body button").forEach(b=>b.disabled=true);
+  setMsg("saving…",false);
+  try{
+    const r = await api("/api/secrets",{key, provider:vendor});   // POST to that vendor's slot — can't desync
+    if(r && r.error) throw new Error(r.error);
+    renderSettings(await api("/api/settings"));     // rebuilds the panel with the new "key stored" status
+  }catch(e){
+    document.querySelectorAll("#settings-body button").forEach(b=>b.disabled=false);
+    setMsg("⚠ "+((e&&e.message)||"couldn't save key — is the server up?"),true);
+  }
+}
+async function clearApiKey(){
+  const vendor = (document.getElementById("api-key-input")?.dataset.vendor) || "anthropic";  // same-element vendor
+  document.querySelectorAll("#settings-body button").forEach(b=>b.disabled=true);
+  try{
+    const r = await api("/api/secrets",{clear:true, provider:vendor});   // clear THAT vendor's slot — can't desync
+    if(r && r.error) throw new Error(r.error);
+    renderSettings(await api("/api/settings"));
+  }catch(e){
+    document.querySelectorAll("#settings-body button").forEach(b=>b.disabled=false);
+    const msg=document.getElementById("api-key-msg");
+    if(msg){ msg.textContent="⚠ "+((e&&e.message)||"couldn't clear key"); msg.classList.add("err"); }
+  }
+}
+// boot + every return-to-tab: prime COACHING_ON / COACH_BUILT_IN so the live UX (the "talk it through"
+// vs "show the facts" relabel) reads right even if the player never opens the menu. The error is
+// swallowed BY DESIGN — on a failed fetch we keep the optimistic defaults (true/false), which read
+// right for the common case, and the focus/visibility re-prime + the menu's own openSettings (which
+// surfaces the error) recover it. The worker is authoritative regardless; only the label can lag.
+async function loadSettings(){
+  try{ const s=await api("/api/settings"); COACHING_ON=!!s.coaching_enabled; COACH_BUILT_IN=!!s.coach_built_in; }
+  catch(e){}
+}
+
+// ---- read-accuracy trend (the felt-sense calibration arc) ----
+// Each recent read → a bar: height = how close the gut was (abs_gap 0 → full, 50+ → empty);
+// green if the band was right, muted gold if the % was close but the band missed. Taller & greener = sharper.
+function calibSpark(recent){
+  if(!recent || recent.length<2) return `<div class="hint">commit a few reads to see your accuracy curve</div>`;
+  const w=480,h=80,n=recent.length,bw=Math.max(2,Math.min(20,(w/n)-2));
+  const bars=recent.map((s,i)=>{
+    const acc=Math.max(0,100-Math.min(s.abs_gap,50)*2);     // abs_gap 0→100, ≥50→0
+    const bh=(acc/100)*(h-10)+4, x=(i/n)*w, y=h-bh;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${s.band_hit?'#7fe0a8':'#9c8a4e'}"/>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${bars}</svg>
+    <div class="hint" style="justify-content:space-between"><span>older</span><span>taller &amp; greener = sharper</span><span>latest</span></div>`;
+}
+function rateClass(r){ return r==null?"none":r>=70?"hot":r>=50?"warm":"cool"; }
+const DIR_LABEL = {sharpening:"▲ sharpening", holding:"▬ holding", drifting:"▼ drifting"};
+function renderReadsBlock(label, d, isModeled){
+  if(!d || !d.n){
+    return `<div class="sect"><h4>${label}</h4><div class="hint">${isModeled
+      ? "no live reads yet — hit “Log read ♠” mid-hand and commit your gut"
+      : "no review reads yet — open a session report, hit “⟳ review”, and commit your read on each spot"}</div></div>`;
+  }
+  const dir = d.direction ? `<span class="dir ${d.direction}">${DIR_LABEL[d.direction]}</span>` : "";
+  // headline = ALL-TIME (stable); the chart + arrow + this recent% share the recent window — the two
+  // denominators are labelled so the UI never implies the big number and the curve are one population.
+  const recentLine = d.recent_n
+    ? `recent (last ${d.recent_n}): <b style="color:#cfe6d8">${d.recent_band_hit_rate==null?"—":d.recent_band_hit_rate+"%"}</b> on band`
+    : "";
+  return `<div class="sect ${isModeled?'reads-modeled':''}">
+    <h4>${label}</h4>
+    <div class="reads-head">
+      <span class="reads-rate ${rateClass(d.band_hit_rate)}">${d.band_hit_rate==null?"—":d.band_hit_rate+"%"}</span>
+      <span class="reads-cap">reads you named the right band · all-time</span>
+    </div>
+    <div class="reads-sub">${d.n} read${d.n>1?"s":""} · your number averages ${d.avg_abs_gap==null?"—":d.avg_abs_gap+" pts"} off the truth</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:11px;flex-wrap:wrap">
+      <span class="reads-cap" style="text-transform:none;letter-spacing:.3px">${recentLine}</span>${dir}
+    </div>
+    <div class="chart" style="margin-top:8px">${calibSpark(d.recent)}</div>
+  </div>`;
+}
+// the ◆ range-collapse TREND (cross-session): the live block above tracks range-READING (gut vs
+// modeled); this tracks the DISTINCT skill of range-COLLAPSE-spotting (modeled vs the cards). Fed by
+// /api/read_reconciliation with NO session → every joinable read across sessions.
+function renderCollapseBlock(reads){
+  const H = `◆ Range-collapse — modeled vs the cards`;
+  const joinable = reads.length;
+  if(!joinable){
+    return `<div class="sect reads-collapse"><h4>${H}</h4>
+      <div class="hint">no joinable live reads yet — this needs a “Log read ♠” on a hand that reached the cards</div></div>`;
+  }
+  const moved = reads.filter(collapsed);   // band change OR ≥12pt swing — same gate as the hand-end card
+  if(!moved.length){
+    return `<div class="sect reads-collapse"><h4>${H}</h4>
+      <div class="reads-sub">${joinable} joinable read${joinable>1?"s":""} · none collapsed — your reads held when the cards came down</div></div>`;
+  }
+  const against = moved.filter(r=>r.delta<0).length;
+  moved.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  const w = moved[0];
+  return `<div class="sect reads-collapse">
+    <h4>${H}</h4>
+    <div class="reads-head">
+      <span class="reads-rate" style="color:var(--collapse)">${moved.length}<span style="font-size:18px;color:var(--dim)">/${joinable}</span></span>
+      <span class="reads-cap">reads where the cards MOVED the equity (band or ≥12pt) · ${against} against you</span>
+    </div>
+    <div class="reads-sub">a DIFFERENT skill from the live read: range-<b style="color:var(--collapse)">collapse</b>-spotting, not range-reading — the line moved her actual hand off her range</div>
+    <div class="chart" style="margin-top:8px;padding:11px 13px">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">sharpest collapse</div>
+      <div style="font-size:13px">#${w.hand_no} ${escapeHtml(w.street||"")} — modeled <b style="color:var(--gold)">${w.modeled_band}</b> (~${w.modeled}%) <span style="color:var(--collapse)">→</span> the cards <b style="color:#eaf2ec">${w.exact_band}</b> (${w.exact}%)</div>
+    </div>
+  </div>`;
+}
+async function openReads(){
+  let c={}, rec={};
+  try{ c=await api("/api/calibration"); }catch(e){}
+  try{ rec=await api("/api/read_reconciliation"); }catch(e){}   // no session → all-sessions collapse trend
+  const ex=c.exact||{}, md=c.modeled||{};
+  const reads=(rec&&rec.reads)||[];
+  document.getElementById("reads-body").innerHTML = !(ex.n||md.n)
+    ? `<div class="sect"><div class="hint" style="line-height:1.65">No reads logged yet.<br>
+        Two surfaces feed this: the <b style="color:#cfe6d8">review drill</b> (open a session report → “⟳ review” → commit your gut on each spot, vs the EXACT equity) and the
+        <b style="color:#cfe6d8">live beat</b> (“Log read ♠” mid-hand → commit, vs the MODELED equity).<br>
+        Your gut-accuracy arc shows up here once you start committing reads.</div></div>`
+    : renderReadsBlock("Review reads — vs exact equity", ex, false)
+      + renderReadsBlock("Live reads — vs modeled equity (model-relative)", md, true)
+      + renderCollapseBlock(reads);
+  document.getElementById("reads").classList.add("open");
+}
+function closeReads(){ document.getElementById("reads").classList.remove("open"); }
+function fmtCard(c){ return (c[0]==="T"?"10":c[0])+SUIT[c[1]]; }
+
+// ---- stepped playback of the betting progression ----
+// Storage can be BLOCKED where the table is embedded (a sandboxed MCP-App frame, a locked-down
+// browser): an unguarded localStorage access throws at load and the whole table dies on "loading…".
+let SPEED = (()=>{ try{ return localStorage.getItem("fp_speed"); }catch(e){ return null; } })() || "normal";
+const DELAY = {instant:0, fast:420, normal:1150};
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function renderSpeed(){
+  document.getElementById("speedctl").innerHTML = `<span>pace</span>` +
+    ["instant","fast","normal"].map(s=>`<button class="${SPEED===s?'on':''}" onclick="setSpeed('${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join("");
+}
+function setSpeed(s){ SPEED=s; try{ localStorage.setItem("fp_speed",s); }catch(e){} renderSpeed(); }
+
+function flashAction(f){
+  if(f.just_acted==null || !f.label) return;
+  const el=document.querySelector('#seats .seat[data-seat="'+f.just_acted+'"]');
+  if(!el) return;
+  const lab=document.createElement("div"); lab.className="actionlabel"; lab.textContent=f.label;
+  (el.querySelector(".badge")||el).appendChild(lab);
+}
+function setBusy(){ showToast(null); document.getElementById("panel").innerHTML=`<div class="hint">…</div>`; }
+
+// animate the villain progression (frames), then settle on the final view
+async function applyResult(v){
+  const frames = v.frames||[];
+  if(SPEED==="instant" || !frames.length){ render(v); return; }
+  setBusy();
+  for(const f of frames){ renderTable(f,true); flashAction(f); await sleep(DELAY[SPEED]); }
+  render(v);
+}
+
+function setR(v){ document.getElementById("rin").value=v; document.getElementById("rraw").value=v; }
+function stepR(d){ const i=document.getElementById("rin"); if(!i)return;
+  const lo=parseInt(i.min,10), hi=parseInt(i.max,10), cur=parseInt(i.value,10);
+  if(!Number.isFinite(lo)||!Number.isFinite(hi))return;       // bounds must be numeric
+  setR(Math.max(lo,Math.min(hi,(Number.isFinite(cur)?cur:lo)+d))); }  // finite-check keeps a legit 0
+// BUSY guard: set BEFORE the await (the network-gap window setBusy can't reach),
+// cleared only after the animation resolves — blocks double-submit + overlapping loops.
+// ACTGEN: bumped at the START of every action so a focus-sync GET can tell an action
+// raced it (started AND finished during the GET — BUSY is back to false by then).
+let BUSY = false, ACTGEN = 0, SYNCING = false;
+async function deal(){ if(BUSY)return; BUSY=true; ACTGEN++; COACH_GEN++; hideCoach(); window._prevBoardLen=0; try{ await applyResult(await api("/api/new",{})); } finally{ BUSY=false; } }
+async function act(a){ if(BUSY)return; BUSY=true; ACTGEN++; COACH_GEN++; hideCoach(); try{ await applyResult(await api("/api/act",{action:a})); } finally{ BUSY=false; } }
+async function raise(){ if(BUSY)return; BUSY=true; ACTGEN++; COACH_GEN++; hideCoach(); try{ await applyResult(await api("/api/act",{action:"raise",amount:parseInt(document.getElementById("rin").value)})); } finally{ BUSY=false; } }
+// lifecycle actions — no frames to animate, so render the returned view directly
+async function sit(){ if(BUSY)return; BUSY=true; ACTGEN++; window._prevBoardLen=0; try{ render(await api("/api/sit",{})); } finally{ BUSY=false; } }
+async function reload_(){ if(BUSY)return; BUSY=true; ACTGEN++; try{ render(await api("/api/reload",{})); } finally{ BUSY=false; } }
+async function getup(){ if(BUSY)return; BUSY=true; ACTGEN++; window._prevBoardLen=0; try{ render(await api("/api/getup",{})); } finally{ BUSY=false; } }
+async function doReset(){ if(BUSY)return; BUSY=true; ACTGEN++; try{ closeCareer(); render(await api("/api/reset",{})); } finally{ BUSY=false; } }
+function resetAll(ev){            // two-tap inline confirm (no native dialog)
+  const b=ev&&ev.currentTarget;
+  if(b && b.dataset.armed!=="1"){
+    b.dataset.armed="1"; const orig=b.textContent;
+    b.textContent="Tap again to confirm — erases everything";
+    setTimeout(()=>{ if(b){ b.dataset.armed="0"; b.textContent=orig; } }, 4000);
+    return;
+  }
+  doReset();
+}
+document.addEventListener("keydown", e=>{ if(e.key==="Escape"){ closeModal(); closeReport(); closeCareer(); closeSettings(); } });
+
+// Cross-device sync: the laptop server is the single source of truth, but the client
+// only pulls state on demand. Re-pull when this tab becomes visible/focused so picking
+// up another device — or returning to an idle tab — snaps to the CURRENT shared game.
+// Guards (read-only throughout): SYNCING dedups the visibilitychange+focus double-fire;
+// skip while a modal is open or the raise sizing has focus (don't yank what the user is
+// looking at / editing); the ACTGEN epoch discards the render if ANY action started
+// during the GET — catches the action that started AND finished mid-fetch (BUSY alone
+// can't, since it's false again by then).
+async function syncState(){
+  if(BUSY || SYNCING) return;
+  if(REVIEW_HAND!=null) return;                 // don't yank the table during a hand review
+  if(DRILL_DP) return;                          // …or out from under an OPEN drill (the live commit-beat runs
+                                                // outside BUSY, so a visibility/focus re-pull would desync the felt under it)
+  if(document.querySelector(".modal-bg.open")) return;
+  const ae = document.activeElement;
+  if(ae && ae.closest && ae.closest(".sizing")) return;
+  SYNCING = true;
+  const gen = ACTGEN;
+  try{
+    const v = await api("/api/state");
+    if(!BUSY && ACTGEN === gen) render(v);
+  } catch(e){ /* offline / transient — keep the current view */ }
+  finally{ SYNCING = false; }
+}
+// re-prime settings alongside the state re-pull: a failed boot fetch, or coaching toggled from
+// another surface (the MCP, a second device), self-heals the live "talk it through"/"show the facts"
+// label on the next return-to-tab — no separate cadence (these events already fire for cross-device sync).
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible"){ loadSettings(); syncState(); } });
+window.addEventListener("focus", ()=>{ loadSettings(); syncState(); });
+
+// ---- coach channel (Slice 1): in-hand "Ask flow" + post-hand "Review with flow" ----
+// COACH_GEN is the staleness epoch: bumped on every ask AND every hero action, so an
+// in-flight poll whose spot the player already moved past resolves into nothing.
+let COACH_GEN = 0, REVIEW_HAND = null, REVIEW_SHOWN = false, REVIEW_PENDING = false, REVIEW_SID = null;
+
+// fire-and-forget a committed read into the calibration trend. NEVER throws into the drill flow:
+// the reveal already happened from the canonical number the server sent, so a logging hiccup must
+// not break the UX — a dropped sample is strictly better than a broken drill.
+function postCalibration(path, body){
+  try{ api(path, body).catch(()=>{}); }catch(e){}
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function formatCoach(text){ return escapeHtml(text).replace(/\n/g,"<br>"); }
+
+function renderCoach(bodyHtml){
+  const el=document.getElementById("coachpanel"); el.style.display="block";
+  const reviewing = REVIEW_HAND!=null;
+  const lbl = reviewing ? `♠ coach · reviewing hand #${REVIEW_HAND}` : "♠ coach";
+  const actions = reviewing
+    ? `<button class="quick" onclick="backToReport()">↩ Back to report</button>`
+    : `<button class="coachx" onclick="hideCoach()">✕</button>`;
+  el.innerHTML=`<div class="coachhdr"><span class="coachlbl">${lbl}</span>${actions}</div>`+
+               `<div class="coachbody">${bodyHtml}</div>`;
+}
+function thinkingCoach(msg){ renderCoach(`<span class="thinking">${escapeHtml(msg)}</span>`); }
+function answeredCoach(text){ renderCoach(formatCoach(text)); }
+// bump the epoch on EVERY dismissal so a detached in-flight pollCoach self-cancels
+// instead of re-opening the panel the user just closed (covers backToReport/restoreView,
+// which both route through here).
+function hideCoach(){ COACH_GEN++; abortDrill(); const el=document.getElementById("coachpanel"); el.style.display="none"; el.innerHTML=""; }
+
+async function pollCoach(id, gen, tries=0){
+  if(gen!==COACH_GEN) return;                    // superseded by a newer ask / a hero action
+  let r=null; try{ r=await api("/api/coach/poll?id="+id); }catch(e){}
+  if(gen!==COACH_GEN) return;
+  if(r && r.status==="answered"){ answeredCoach(r.response); return; }
+  if(r && r.status==="missing"){ answeredCoach("⚠ that coaching request expired."); return; }
+  // the full-flow coach (claude -p) is DEEP: ~30s typical, up to the daemon's 90s ceiling (then it
+  // falls back to facts). Poll PAST that ceiling (+margin) before declaring failure — the old 60s
+  // budget quit while the daemon was still working — and reassure once it runs long so a real read
+  // doesn't read as a hang.
+  if(tries>85){ answeredCoach("⚠ no coach answered in ~100s — check the server log: is it running without <code>--no-coach</code>, and is <code>claude</code> logged in (a plain terminal, NOT inside Claude Code)?"); return; }
+  if(tries===18){ const el=document.querySelector("#coachpanel .thinking"); if(el) el.textContent="the coach is going deep — a full read can take 30–60s…"; }
+  setTimeout(()=>pollCoach(id, gen, tries+1), 1200);
+}
+
+// "Log read ♠": LOG a read — pure calibration, NO coach dispatch (logging a read ≠ asking flow for
+// coaching: "most times I log a read I'm not looking for coaching"). Fetch the spot, run the gut-commit
+// drill, compute the gap in CODE at commit (no worker needed). Coaching is a deliberate FOLLOW-ON — a
+// "talk it through ♠" button appears ON the reveal (talkItThrough), only when you actually want the why.
+async function logRead(){
+  if(BUSY) return;
+  REVIEW_HAND=null; COACH_GEN++; const gen=COACH_GEN;
+  let r=null;
+  try{ r=await api("/api/read/spot"); }                       // GET — reads the spot, dispatches NO coach
+  catch(e){ if(gen===COACH_GEN) answeredCoach("⚠ couldn't read the spot — is the server up?"); return; }
+  if(gen!==COACH_GEN) return;
+  if(!r || r.error){ if(gen===COACH_GEN) answeredCoach("⚠ "+escapeHtml((r&&r.error)||"no live decision to read")); return; }
+  LIVE_TOKEN = r.token || null;   // round-tripped on commit so a read off a stale drill (the hand moved) is rejected
+  if(r.spot && r.spot.has_model){ renderLiveDrill(r.spot, gen); return; }
+  renderNoModel(gen);   // no live opponent to model against (rare) — nothing to calibrate; offer the prose
+}
+
+// no-model spot: there's no read to calibrate, so don't silently no-op — say so and OFFER coaching
+// (never force it). The {live:true} marker lets a hero action tear this down like a live drill.
+function renderNoModel(gen){
+  abortDrill();
+  DRILL_DP={live:true};
+  LIVE_EQ=null;                                      // no number → talk-it-through narrates without one
+  const el=document.getElementById("drillpanel"); el.style.display="block";
+  el.innerHTML=`
+    <div class="drill-hd"><span class="lbl">♠ read check · live</span>
+      <span class="step">no opponent to read</span></div>
+    <div class="drill-reveal show mid">
+      <div class="big">No live opponent to read against here — nothing to calibrate.</div>
+      <button class="ask-flow" id="talk-btn" onclick="talkItThrough()">talk it through ♠</button>
+      <button class="drill-next" onclick="dismissLiveDrill()">Got it ▸</button></div>`;
+}
+
+async function reviewHand(sid, handNo){
+  if(BUSY) return; BUSY=true;
+  COACH_GEN++; const gen=COACH_GEN; REVIEW_PENDING=true;   // pending until commit — so closeReport can supersede the in-flight ask
+  try{
+    // ask FIRST, with the report still open — only commit to the review UI once it
+    // succeeds, so an error leaves the player on the report they were reading (not a
+    // blank table with the modal gone and no way back).
+    let r=null;
+    try{ r=await api("/api/coach/ask",{kind:"review",session_id:sid,hand_no:handNo}); }
+    catch(e){ alertReport("⚠ coach unreachable — is the server up?"); return; }
+    if(r.error){ alertReport("⚠ "+escapeHtml(r.error)); return; }
+    if(gen!==COACH_GEN) return;                       // superseded while awaiting (incl. closeReport mid-ask)
+    REVIEW_HAND=handNo; REVIEW_SID=sid; REVIEW_PENDING=false;  // committed → REVIEW_SHOWN/restoreView owns back-out from here
+    document.getElementById("report").classList.remove("open");
+    thinkingCoach(`the coach is reviewing hand #${handNo}…`);
+    pollCoach(r.id, gen);
+    window._prevBoardLen=0;
+    REVIEW_SHOWN=true;                  // a replay frame is now on the felt → close⇒restoreView
+    await playFrames(r.frames||[], gen, handNo, r.decision_points||[]);  // aborts if user backs out mid-replay
+  } finally { BUSY=false; REVIEW_PENDING=false; }
+}
+
+function backToReport(){ REVIEW_HAND=null; hideCoach(); if(LAST_REPORT) showReport(LAST_REPORT); }
+
+// ---- the prediction-error drill (Slice 3): commit your gut, then see the EXACT equity ----
+// The replay freezes at each hero postflop decision; the player estimates their equity by feel, commits,
+// then the exact number (enumerated vs the villains' actual cards) reveals the gap. Felt-sense forge.
+let DRILL_RESOLVE = null, DRILL_DP = null, DRILL_LEAN = null, LIVE_EQ = null, LIVE_TOKEN = null;
+function cardsHtml(arr){
+  return (arr||[]).map(c=>{
+    const r=c[0]==="T"?"10":c[0], red=RED[c[1]]?" red":"";
+    return `<div class="card lg${red}"><span class="r">${r}</span><span>${SUIT[c[1]]}</span></div>`;
+  }).join("") || `<span style="color:var(--dim);font-size:12px">preflop</span>`;
+}
+// felt-sense label for an equity % — the gut reads bands, the % calibrates. MUST stay in sync with
+// equity.py band()/_EQUITY_BANDS.
+function eqBand(pct){
+  if(pct==null) return "";
+  for(const [hi,label] of [[2,"drawing dead"],[18,"drawing thin"],[42,"behind"],[58,"a coin flip"],[75,"a favorite"],[90,"a clear favorite"]])
+    if(pct<hi) return label;
+  return "crushing";
+}
+// SHARED felt-language judgment — the review drill (exact) and the live drill (modeled) MUST grade a
+// read the same way, so this single function owns the band-gap → verdict mapping. Same-band isn't
+// automatically "dialed": a wide band (e.g. coin flip 42-58) can hide a big miss, and praising a
+// 20-point miss teaches a sloppy read (codex L3) — so "dialed" is gated on band AND calibration.
+function readVerdict(gut, truth, truthBand){
+  const gap=Math.round(gut-truth), gutBand=eqBand(gut), ag=Math.abs(gap);
+  let cls, verdict;
+  if(truthBand===gutBand){
+    if(ag<=10){ cls="good"; verdict=`Dialed in — you read it <b>${truthBand}</b>, and it was.`; }
+    else { cls="mid"; verdict=`Right read — <b>${truthBand}</b> — but your number was ${ag} off (${gut}% vs ${truth}%).`; }
+  }
+  else if(gap>0){ cls="warn"; verdict=`You read <b>${gutBand}</b> — it was actually <b>${truthBand}</b>.`; }
+  else { cls="mid"; verdict=`You sold it short — you read <b>${gutBand}</b>, it was <b>${truthBand}</b>.`; }
+  return {cls, verdict, gutBand, gap, ag};
+}
+function lockDrillInputs(){            // post-commit: freeze the slider/lean/note/commit so the read can't be edited
+  document.getElementById("drill-eq").disabled=true;
+  document.querySelectorAll("#drill-lean button").forEach(b=>b.disabled=true);
+  const nt=document.getElementById("drill-note"); if(nt) nt.disabled=true;
+  const tg=document.getElementById("drill-note-toggle"); if(tg) tg.disabled=true;
+  const cb=document.querySelector(".drill-commit"); if(cb) cb.disabled=true;
+}
+function showLiveNote(){               // live beat's collapsed read-note: reveal + focus the box, retire the toggle
+  const t=document.getElementById("drill-note-toggle"), n=document.getElementById("drill-note");
+  if(t) t.style.display="none";
+  if(n){ n.style.display="block"; n.focus(); }
+}
+function drillPct(v){ document.getElementById("drill-pct").textContent = `${v}% · ${eqBand(+v)}`; }
+function runDrill(dp, dn, total){      // resolves when the player commits + advances (or the review aborts)
+  return new Promise(resolve=>{ DRILL_RESOLVE=resolve; renderDrill(dp, dn, total); });
+}
+function abortDrill(){                 // back-out / supersede: tear down + release any awaiting playFrames
+  const el=document.getElementById("drillpanel"); if(el){ el.style.display="none"; el.innerHTML=""; }
+  DRILL_DP=null; DRILL_LEAN=null;
+  if(DRILL_RESOLVE){ const r=DRILL_RESOLVE; DRILL_RESOLVE=null; r(); }
+}
+function renderDrill(dp, dn, total){
+  DRILL_DP=dp; DRILL_LEAN=null;
+  const facing = dp.to_call>0;
+  const lean = facing ? (dp.can_raise ? ["fold","call","raise"] : ["fold","call"]) : ["check","bet"];
+  const ctc = dp.cards_to_come;
+  const ctcTxt = ctc===0?"showdown — no cards to come":ctc===1?"1 card to come":ctc+" cards to come";
+  const el=document.getElementById("drillpanel"); el.style.display="block";
+  el.innerHTML=`
+    <div class="drill-hd"><span class="lbl">♠ read check</span>
+      <span class="step">decision ${dn} of ${total} · ${escapeHtml(dp.street)}</span></div>
+    <div class="drill-spot">
+      <div class="grp"><span class="cap">board</span><div class="drill-cards">${cardsHtml(dp.board)}</div></div>
+      <div class="grp"><span class="cap">your hand</span><div class="drill-cards">${cardsHtml(dp.hero_hole)}</div></div>
+      <div class="grp"><span class="cap">${facing?`pot ${dp.pot} · to call ${dp.to_call}`:`pot ${dp.pot} · checked to you`}</span>
+        <span style="color:var(--dim);font-size:11px">${ctcTxt} · vs ${dp.vs} live</span></div>
+    </div>
+    <div class="drill-q">Where's your gut? Drag until the read feels right — it'll name it.</div>
+    <div class="drill-slider">
+      <input type="range" min="0" max="100" value="50" id="drill-eq" oninput="drillPct(this.value)">
+      <span class="drill-pct" id="drill-pct">50% · a coin flip</span>
+    </div>
+    <div class="drill-lean" id="drill-lean">
+      ${lean.map(l=>`<button onclick="pickLean(this,'${l}')">${l[0].toUpperCase()+l.slice(1)}</button>`).join("")}
+    </div>
+    <textarea class="drill-note" id="drill-note" maxlength="280" rows="2"
+      placeholder="read notes (optional) — your read in your own words, e.g. “weak kicker, drawing thin, all hands still to be made”"></textarea>
+    <button class="drill-commit" onclick="commitRead()">Commit your read ▸</button>
+    <div class="drill-reveal" id="drill-reveal"></div>`;
+}
+function pickLean(btn,l){ DRILL_LEAN=l; [...btn.parentNode.children].forEach(b=>b.classList.toggle("on",b===btn)); }
+function commitRead(){
+  const dp=DRILL_DP; if(!dp || dp.live) return;   // review commit; never act on a live-drill marker (it has no .equity)
+  const gut=parseInt(document.getElementById("drill-eq").value);
+  const exact=dp.equity, exactBand=dp.band||eqBand(exact);
+  const {cls, verdict, gutBand} = readVerdict(gut, exact, exactBand);   // shared felt-language judgment
+  const lean = DRILL_LEAN?` · your lean: <b style="color:#cfe6d8;font-size:13px;display:inline">${DRILL_LEAN}</b>`:"";
+  const rev=document.getElementById("drill-reveal");
+  rev.className="drill-reveal show "+cls;
+  rev.innerHTML=`
+    <div class="big">${verdict}</div>
+    <div class="row">
+      <span>the truth<b style="color:var(--gold)">${exactBand}</b><span class="eqpct">${exact}%</span></span>
+      <span>your read<b style="color:#eaf2ec">${gutBand}</b><span class="eqpct">${gut}%</span></span></div>
+    <div class="did">you actually ${escapeHtml(dp.action)}${lean}${dp.exact?" · exact, every runout enumerated":""}</div>
+    <button class="drill-next" onclick="nextDrill()">Continue ▸</button>`;
+  lockDrillInputs();
+  // log this read into the calibration trend (exact source). The server recomputes the canonical
+  // truth from (session_id, hand_no, n) — we send only the gut + lean + which decision.
+  if(REVIEW_SID!=null && REVIEW_HAND!=null && dp.n!=null){
+    const noteEl=document.getElementById("drill-note");
+    const note=noteEl ? noteEl.value.trim() : "";   // optional prose read; server sanitizes + bounds it
+    postCalibration("/api/calibration/review",
+      {session_id:REVIEW_SID, hand_no:REVIEW_HAND, n:dp.n, gut, lean:DRILL_LEAN,
+       note: note || null});
+  }
+}
+function nextDrill(){
+  const el=document.getElementById("drillpanel"); el.style.display="none"; el.innerHTML="";
+  DRILL_DP=null; DRILL_LEAN=null;
+  if(DRILL_RESOLVE){ const r=DRILL_RESOLVE; DRILL_RESOLVE=null; r(); }
+}
+
+// ---- the LIVE commit-beat (Slice 3 live path): the in-hand analog of the review drill ----
+// "Log read" → commit your gut + lean (+ optional note) BEFORE anything reveals → the server computes
+// the MODELED equity in CODE at commit (vs the observed-read range, NOT the cards) and reveals the gap.
+// The number is computed only at commit (/api/read/commit), so it never leaks before the read is locked
+// in. It's a read, not the cards — the reveal says so (modeled ≠ the exact truth the review drill
+// enumerates). Coaching is NOT auto-fired here: the reveal offers a "talk it through ♠" follow-on.
+function renderLiveDrill(spot, gen){
+  document.getElementById("coachpanel").style.display="none";   // prose waits until after commit (it cites the number)
+  abortDrill();                                                 // clear any prior drill state before reusing the panel
+  DRILL_DP={live:true}; DRILL_LEAN=null;                        // marker so abortDrill/hideCoach tear this down on supersede
+  const facing = spot.to_call>0;
+  const lean = facing ? (spot.legal && spot.legal.can_raise ? ["fold","call","raise"] : ["fold","call"]) : ["check","bet"];
+  const ctc = spot.cards_to_come;
+  const ctcTxt = ctc>=5?"preflop":ctc===0?"showdown — no cards to come":ctc===1?"1 card to come":ctc+" cards to come";
+  const priceTxt = facing?`pot ${spot.pot} · to call ${spot.to_call}`:`pot ${spot.pot} · checked to you`;
+  const el=document.getElementById("drillpanel"); el.style.display="block";
+  el.innerHTML=`
+    <div class="drill-hd"><span class="lbl">♠ read check · live</span>
+      <span class="step">${escapeHtml(spot.street||"")} · your decision</span></div>
+    <div class="drill-spot">
+      <div class="grp"><span class="cap">board</span><div class="drill-cards">${cardsHtml(spot.board)}</div></div>
+      <div class="grp"><span class="cap">your hand</span><div class="drill-cards">${cardsHtml(spot.hero_hole)}</div></div>
+      <div class="grp"><span class="cap">${priceTxt}</span>
+        <span style="color:var(--dim);font-size:11px">${ctcTxt} · vs ${spot.live_count} live</span></div>
+    </div>
+    <div class="drill-q">Where's your gut? Drag until the read feels right — it'll name it.</div>
+    <div class="drill-slider">
+      <input type="range" min="0" max="100" value="50" id="drill-eq" oninput="drillPct(this.value)">
+      <span class="drill-pct" id="drill-pct">50% · a coin flip</span>
+    </div>
+    <div class="drill-lean" id="drill-lean">
+      ${lean.map(l=>`<button onclick="pickLean(this,'${l}')">${l[0].toUpperCase()+l.slice(1)}</button>`).join("")}
+    </div>
+    <div id="drill-note-row" style="margin-bottom:13px">
+      <button type="button" class="drill-note-toggle" id="drill-note-toggle" onclick="showLiveNote()">+ read note</button>
+      <textarea class="drill-note" id="drill-note" maxlength="280" rows="2" style="display:none"
+        placeholder="your read in your own words (optional) — accessible to the coach when you ask"></textarea>
+    </div>
+    <button class="drill-commit" onclick="commitLogRead(${gen})">Commit your read ▸</button>
+    <div class="drill-reveal" id="drill-reveal"></div>`;
+}
+async function commitLogRead(gen){
+  if(gen!==COACH_GEN || !(DRILL_DP && DRILL_DP.live)) return;   // acted / re-opened / torn down / a review drill — stale
+  const gut=parseInt(document.getElementById("drill-eq").value);
+  const noteEl=document.getElementById("drill-note");          // optional prose read — captured at the live beat
+  const note=noteEl ? noteEl.value.trim() : "";                // (the truest read: in-the-moment, pre-rationalization)
+  lockDrillInputs();
+  const cb=document.querySelector(".drill-commit"); if(cb) cb.textContent="reading the board…";
+  // compute + log in ONE call: the server recomputes the modeled equity in CODE from authoritative game
+  // state (anti-fab — never trusts a browser number) and records the calibration, then hands the number
+  // back for the reveal. NO coach worker required — logging a read is pure calibration.
+  let res=null; try{ res=await api("/api/read/commit",{gut, lean:DRILL_LEAN, note: note || null, token: LIVE_TOKEN}); }catch(e){}
+  if(gen!==COACH_GEN) return;                        // superseded while waiting (a hero action) — drill torn down
+  if(res && res.ok){ renderLiveReveal(gut, res.equity); return; }   // the gap + the talk-it-through follow-on
+  // nothing logged: the spot moved on (the hand advanced elsewhere) or the read couldn't be computed.
+  renderLiveReveal(gut, null, (res && res.reason==="spot moved")
+    ? "This spot moved on — the hand advanced. Nothing was logged."
+    : "Couldn't log this read.");
+}
+
+// "talk it through ♠": the DELIBERATE coaching follow-on, fired from the reveal — NEVER auto. Dispatches
+// the coach for prose; passing the already-revealed equity (LIVE_EQ) makes the narration cite the SAME
+// number the reveal showed (else the worker's own MC would wiggle ±1-2% off it). LIVE_EQ is null on a
+// no-number spot — flow can still talk it through without a number.
+async function talkItThrough(){
+  const gen=COACH_GEN;                               // same epoch — a hero action still cancels the in-flight ask
+  const btn=document.getElementById("talk-btn"); if(btn) btn.disabled=true;   // one ask per reveal
+  thinkingCoach(factsOnly()?"pulling the facts…":"the coach is talking it through…");
+  const body={kind:"decision"};
+  // round-trip the spot token WITH the echoed equity so the server can reject a stale splice (the hand
+  // advanced on another device between the reveal and this ask) instead of narrating the new spot with
+  // the old number. A server "spot moved" error surfaces via the r.error branch below.
+  if(LIVE_EQ && LIVE_EQ.hero_pct!=null){ body.equity=LIVE_EQ; body.token=LIVE_TOKEN; }
+  let r=null;
+  // re-enable the button on a transient failure so the operator can retry (a server-side rejection below
+  // is definitive — leave it disabled there).
+  try{ r=await api("/api/coach/ask", body); }
+  catch(e){ if(gen===COACH_GEN){ answeredCoach("⚠ coach unreachable."); if(btn) btn.disabled=false; } return; }
+  if(gen!==COACH_GEN) return;                         // superseded while awaiting (a hero action)
+  if(r.error){ answeredCoach("⚠ "+escapeHtml(r.error)); return; }
+  pollCoach(r.id, gen);
+}
+function renderLiveReveal(gut, eq, msg){
+  LIVE_EQ = eq;                                      // stash for the optional "talk it through" follow-on
+  const rev=document.getElementById("drill-reveal");
+  // the coaching follow-on — deliberate, never auto-fired (logging a read ≠ asking for coaching). Offered
+  // on every reveal that LOGGED (flow narrates the gap); LIVE_EQ makes the prose cite the SAME number.
+  // honest label: with coaching OFF the follow-on returns the facts floor, not AI prose — so don't
+  // promise "talk it through". (factsOnly() is false for an external worker, which may still coach.)
+  const talk=`<button class="ask-flow" id="talk-btn" onclick="talkItThrough()">${factsOnly()?"show the facts ♠":"talk it through ♠"}</button>`;
+  if(!eq || eq.hero_pct==null){                      // nothing logged (the spot moved / couldn't compute) — no
+    rev.className="drill-reveal show mid";           // talk-it-through: the spot the read was made on is gone
+    rev.innerHTML=`<div class="big">${escapeHtml(msg||"Couldn't log this read.")}</div>
+      <div class="did">your read: <b style="color:#eaf2ec">${eqBand(gut)}</b> (${gut}%).</div>
+      <button class="drill-next" onclick="dismissLiveDrill()">Got it ▸</button>`;
+    return;
+  }
+  const exact=eq.hero_pct, exactBand=eq.band||eqBand(exact);
+  const {cls, verdict, gutBand} = readVerdict(gut, exact, exactBand);   // SAME judgment as the review drill
+  const vs=eq.vs||{};
+  const who = vs.name ? `${escapeHtml(vs.name)}'s ~${vs.range_pct}% range` : "their modeled range";
+  const field = (eq.heads_up===false && eq.pot_way) ? ` · ${eq.pot_way}-way, discount for the field` : "";
+  const lean = DRILL_LEAN?` · your lean: <b style="color:#cfe6d8;font-size:13px;display:inline">${DRILL_LEAN}</b>`:"";
+  rev.className="drill-reveal show "+cls;
+  rev.innerHTML=`
+    <div class="big">${verdict}</div>
+    <div class="row">
+      <span>the model<b style="color:var(--gold)">${exactBand}</b><span class="eqpct">~${exact}%</span></span>
+      <span>your read<b style="color:#eaf2ec">${gutBand}</b><span class="eqpct">${gut}%</span></span></div>
+    <div class="did">vs ${who}${field} — a read, not the cards${lean}</div>
+    ${talk}<button class="drill-next" onclick="dismissLiveDrill()">Got it ▸</button>`;
+}
+function dismissLiveDrill(){
+  const el=document.getElementById("drillpanel"); el.style.display="none"; el.innerHTML="";
+  DRILL_DP=null; DRILL_LEAN=null;
+}
+
+// ---- ◆ range-collapse (hand6 disentangle): the SECOND read-skill, kept LEGIBLY DISTINCT ----
+// The green ♠ live ding grades your gut vs her MODELED range (range-READING). This is a DIFFERENT
+// skill: once the hand reaches the cards, MODELED vs the EXACT cards can swing the other way — you
+// read the range right and her LINE still collapsed it to the nuts. The two can point OPPOSITE ways,
+// so this is its own violet ◆ surface, shown ONLY between hands (never co-resident with the live
+// ding, which would teach the wrong gut adjustment).
+let COLLAPSE_KEY=null;    // the (session,hand) already reconciled — keyed on BOTH because hand_no COLLIDES
+                         // across sessions (mirrors the backend (session_id, hand_no) join key)
+function clearCollapse(){ const c=document.getElementById("collapsecard"); if(c){ c.classList.remove("show"); c.innerHTML=""; } }
+// a read "collapsed" when the cards moved its equity a FELT amount — a band change OR a ≥12pt swing.
+// band-only missed big SAME-band collapses (44→57, both "a coin flip") and fired on hairline crosses
+// (41.6→42.4 = 0.8pt); magnitude-aware matches the live ding's own band+size discipline (readVerdict).
+// Constants are play-gate tunable.
+function collapsed(r){ const d=Math.abs(r.delta); return d>=12 || (r.modeled_band!==r.exact_band && d>=4); }
+function syncCollapse(v){
+  // ONLY between hands (!in_hand + over) on a running session — never while a hand (incl. showdown) is
+  // live, so the card can't stack under a still-up live ding. In-hand / lobby clears it AND re-arms.
+  if(v && !v.in_hand && v.over && v.session && v.session.id && v.hand_no!=null){ maybeCollapse(v.session.id, v.hand_no); }
+  else { clearCollapse(); COLLAPSE_KEY=null; }
+}
+async function maybeCollapse(sid, hand){
+  const key=sid+"\0"+hand;
+  if(COLLAPSE_KEY===key) return;            // already fetching/shown/dismissed this (session,hand) — re-entrant-safe
+  COLLAPSE_KEY=key;
+  let reads=[];
+  try{ const r=await api("/api/read_reconciliation?session="+encodeURIComponent(sid)); reads=(r&&r.reads)||[]; }
+  catch(e){ COLLAPSE_KEY=null; return; }     // transient — the next render (a focus / action) retries this (session,hand)
+  // still between hands on the SAME (session, hand)? hand_no ALONE collides across sessions, so a stale
+  // fetch for session A hand N must NOT render under session B hand N — re-check the session id too (codex L3).
+  if(!(LASTVIEW && !LASTVIEW.in_hand && LASTVIEW.over && LASTVIEW.hand_no===hand
+       && LASTVIEW.session && LASTVIEW.session.id===sid)) return;
+  // only THIS (session,hand)'s reads where the cards actually MOVED the equity (collapsed) — not a wobble
+  const moved=reads.filter(r=>r.session_id===sid && r.hand_no===hand && collapsed(r));
+  if(!moved.length){ clearCollapse(); return; }
+  moved.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));   // surface the sharpest move
+  const card=document.getElementById("collapsecard"); if(!card) return;
+  card.innerHTML=collapseCardHtml(moved);
+  card.classList.add("show");
+}
+function collapseCardHtml(moved){
+  const m=moved[0];
+  const against=m.delta<0;                          // exact WORSE than modeled → the cards came HARSHER
+  const readGood=readVerdict(m.gut, m.modeled, m.modeled_band).cls==="good";   // band-right AND ≤10pt off
+  const big=against
+    ? (readGood ? "You read her range right — her line still collapsed it to the nuts. A collapse to smell, not a reading miss."
+                : "Her line collapsed the range to a monster — the cards came even harsher than your read had it.")
+    : (readGood ? "The range looked scarier than her actual hand — you read it right, she just didn't have it."
+                : "The cards came kinder than the model — the range was bluffier than it looked, even past your read.");
+  const dir=against?"▼ against you":"▲ in your favor";
+  const verdict=`<span style="color:${readGood?'#7fe0a8':'#9c8a4e'}">${readGood?'✓':'~'} read</span>`
+    +` · <span style="color:var(--collapse)">${dir}</span>`;
+  return `
+    <div class="collapse-hd"><span class="lbl">◆ range-collapse · ${escapeHtml(m.street||"")}</span>
+      <span class="step">modeled vs the cards</span></div>
+    <div class="collapse-big">${big}</div>
+    <div class="collapse-row">
+      <span>your read<b>${eqBand(m.gut)}</b><span class="eqpct">${m.gut}%</span></span>
+      <span class="arrow">→</span>
+      <span>the model<b>${m.modeled_band}</b><span class="eqpct">~${m.modeled}%</span></span>
+      <span class="arrow">→</span>
+      <span>the cards<b>${m.exact_band}</b><span class="eqpct">${m.exact}%</span></span>
+    </div>
+    <div class="collapse-did">${verdict} — two skills: the ♠ live check graded your <b>range-read</b>; this ◆ marks the <b>collapse</b> you couldn't see until the cards.</div>
+    <button class="collapse-next" onclick="dismissCollapse()">Got it ◆</button>`;
+}
+// "Got it" = seen this (session,hand) → stays gone (COLLAPSE_KEY holds it; syncCollapse re-arms only when
+// the view leaves the hand). Re-entrant-safe: a focus/visibility re-render hits the COLLAPSE_KEY guard.
+function dismissCollapse(){ clearCollapse(); }
+
+async function playFrames(frames, gen, handNo, dps){
+  if(!frames.length) return;
+  const live = ()=> gen===COACH_GEN && REVIEW_HAND===handNo;   // still the active review?
+  // pause for the drill at the frame each hero decision precedes (only spots with a real equity)
+  const drillable = (dps||[]).filter(d=>d.equity!=null);
+  const byFrame = {};
+  drillable.forEach((d,idx)=>{ d._dn=idx+1; (byFrame[d.frame_index]=byFrame[d.frame_index]||[]).push(d); });
+  const total = drillable.length;
+  const delay = SPEED==="instant" ? 0 : DELAY[SPEED];
+  for(let i=0;i<frames.length;i++){
+    if(!live()) return;                       // backed out / superseded — stop rendering behind it
+    for(const dp of (byFrame[i]||[])){        // drill(s) that fire BEFORE this frame plays
+      if(!live()) return;
+      await runDrill(dp, dp._dn, total);      // table holds at the prior frame while the player estimates
+      if(!live()) return;
+    }
+    renderTable(frames[i],true); flashAction(frames[i]);
+    if(delay) await sleep(delay);
+  }
+}
+
+async function restoreView(){ REVIEW_HAND=null; REVIEW_SID=null; REVIEW_SHOWN=false; hideCoach(); try{ render(await api("/api/state")); }catch(e){} }
+
+renderSpeed();
+loadSettings();
+syncState();
+</script>
+</body>
+</html>

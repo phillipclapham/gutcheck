@@ -1,0 +1,112 @@
+# gutcheck — a felt-sense poker reading-trainer.
+#
+# Install (either works — gutcheck/ package refactor, 2026-06-30):
+#     python3 -m venv venv && . venv/bin/activate
+#     pip install -e .        # editable, from a clone (dev)
+#     # OR:
+#     pip install gutcheck   # a plain non-editable wheel — now fully supported
+#     gutcheck
+# All app modules live inside the `gutcheck/` package and the bundled data files
+# (static/index.html, doctrine.md) ship as package-data (see [tool.setuptools.package-data]), so
+# server.py's HERE/"static" and doctrine.py's HERE/"doctrine.md" resolve against the installed
+# package dir on BOTH install paths. (doctrine.md still degrades to a built-in fallback if absent.)
+#
+# NAME + LICENSE (Phill's gates):
+#   NAME = gutcheck, "a poker reading trainer" (picked 2026-10-17 for the free public release;
+#     the private development name was flowpoker, and the data dir migrates from ~/.flowpoker).
+#   LICENSE = Apache 2.0 (DECIDED 2026-06-23: the patent grant protects downstream operators as the
+#     project accrues doctrine/MCP extensions; the value is the method + leak memory, not the code).
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gutcheck"
+version = "0.1.0"
+description = "A poker reading trainer: commit your read, then see the real equity."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+keywords = ["poker", "trainer", "equity", "holdem", "mcp"]
+authors = [{name = "Phill Clapham"}]
+requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment",
+]
+# pokerkit is the ONLY runtime dependency — the web server is stdlib-only. Pinned to the
+# exact version the trainer was validated against, so a fresh clone reproduces our behavior.
+dependencies = ["pokerkit==0.7.4"]
+
+# OPTIONAL extras — the core game server imports neither, so a plain `pip install gutcheck` stays a
+# single-dep (pokerkit) artifact.
+#   [mcp]    — the official MCP SDK for `gutcheck-mcp` (the thin proxy in mcp_server.py).
+#   [anneal] — anneal-memory, the operator-owned graduating-leak store (P4, the moat). leakstore.py
+#              is a graceful no-op without it; `pip install gutcheck[anneal]` lights up leak memory.
+#              Floor-pinned (not ==) so an operator's store tracks anneal's immune-system fixes.
+#   [api]    — the official vendor SDKs for the METERED coach workers (no Claude/Codex subscription;
+#              operator brings their OWN API key, billed per call). Two metered providers share this extra:
+#                • 'anthropic_api' → coach_daemon.call_anthropic_api (the `anthropic` SDK)
+#                • 'openai_api'    → coach_daemon.call_openai_api    (the `openai` SDK)
+#              Each worker imports its SDK LAZILY → a graceful "install gutcheck[api]" degrade without it;
+#              the subscription (claude/codex) coach needs neither.
+#              anthropic FLOOR = 0.112.0 (L3 codex+L1): the worker sends `output_config={"effort":…}` +
+#              adaptive `thinking` by DEFAULT (effort defaults to "low"), kwargs that postdate 0.40 by a
+#              wide margin — a 0.40-era client would reject them and silently degrade every default metered
+#              call to the facts floor. 0.112.0 is the version those kwargs were verified against.
+#              openai FLOOR = 2.0.0: the worker sends `reasoning_effort=` + `max_completion_tokens=` on
+#              Chat Completions and reads `message.refusal` / `finish_reason` — all stable on the current
+#              2.x major (verified against openai 2.44.0). Bump as the SDKs move; never drop below the
+#              kwargs/fields a worker actually sends or reads.
+[project.urls]
+Homepage = "https://github.com/phillipclapham/gutcheck"
+Source = "https://github.com/phillipclapham/gutcheck"
+Issues = "https://github.com/phillipclapham/gutcheck/issues"
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.28.0,<2"]   # 2.x renamed FastMCP to MCPServer; the port is not done
+anneal = ["anneal-memory>=0.8.5,<2"]
+# Upper bounds = the majors the workers were verified against (the env-header / auth-token handling in
+# coach_daemon names the SDK _client.py it read). A new major is a port with a re-read, not a bump.
+api = ["anthropic>=0.112.0,<1", "openai>=2.0.0,<3"]
+
+[project.scripts]
+gutcheck = "gutcheck.server:main"
+gutcheck-mcp = "gutcheck.mcp_server:main"
+
+# Package layout (the gutcheck/ package refactor, 2026-06-30): all app modules live inside the
+# `gutcheck/` package. Discovery is AUTOMATIC via [tool.setuptools.packages.find] below — this
+# RETIRES the flat-layout `py-modules` footgun (every new flat module had to be hand-registered or
+# the strict editable finder wouldn't expose it and the INSTALLED entry point crashed while every
+# cwd-run test passed — bit `gutcheck-mcp`/doctrine 2026-06-22 AND `gutcheck`/settings 2026-06-23).
+# It also retires the stdlib-`secrets`-shadowing hazard that forced `keystore` over `secrets` (a
+# package submodule `gutcheck.secrets` would NOT shadow the stdlib `secrets`); the name stays
+# `keystore` for continuity, but the constraint is gone.
+[tool.setuptools.packages.find]
+# Auto-DISCOVER every gutcheck* package rather than listing them. This closes the hand-registration
+# class ENTIRELY: not only does a new module inside gutcheck/ ship automatically (what an explicit
+# `packages = ["gutcheck"]` already gave), but a future SUBPACKAGE (e.g. gutcheck/providers/) is
+# picked up too — an explicit list would silently drop it, the same footgun one directory level up.
+# `include` is a whitelist, so the repo-root test_*.py modules and static/ (no __init__) are excluded
+# by construction; `exclude` is belt-and-braces so the discovery WALK never even descends into a
+# local venv/build tree (verified: the built wheel's top_level.txt is `gutcheck` alone).
+where = ["."]
+include = ["gutcheck*"]
+exclude = ["venv*", ".venv*", "env*", "build*", "dist*", "*.egg-info*"]
+
+[tool.setuptools.package-data]
+# The bundled data files ride the wheel as package-data so a non-editable `pip install gutcheck`
+# carries them — server.py resolves static/ via HERE/"static" and doctrine.py resolves
+# doctrine.md via HERE/"doctrine.md", both relative to the installed package dir. (Belt-and-braces
+# with MANIFEST.in, which governs the sdist.) The recursive `static/**/*` glob is honored because
+# build-system requires setuptools>=68 (recursive package-data globs land in 62.3+); `static/*`
+# covers the flat case regardless. Verified: the built wheel carries static/index.html + doctrine.md.
+gutcheck = ["static/*", "static/**/*", "doctrine.md"]

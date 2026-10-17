@@ -1,0 +1,24 @@
+venv/
+__pycache__/
+*.pyc
+# packaging build artifacts (from `pip install -e .` / `build`)
+*.egg-info/
+build/
+dist/
+# legacy in-repo state — state now lives in ~/.gutcheck (or $GUTCHECK_DATA_DIR); these
+# entries stay as a backstop in case someone runs with GUTCHECK_DATA_DIR=. in the repo
+session.json
+career.json
+career.corrupt.json
+sessions/
+coach.db
+coach.db-wal
+coach.db-shm
+*.tmp
+.DS_Store
+# local-only: the author's working notes and machine-specific setup never ship in the public repo
+project_memory/
+SCOPE.md
+launchd/
+docs/weekend_howto.html
+verify_coach_env.sh
