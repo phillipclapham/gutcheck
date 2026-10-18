@@ -374,6 +374,7 @@ class TestNoFalseNestingWarning(unittest.TestCase):
                 os.environ.pop("CLAUDECODE", None)
             else:
                 os.environ["CLAUDECODE"] = saved
+        self.assertIn("[coach_daemon] up", err.getvalue())          # the startup path really ran
         self.assertNotIn("fall back to the stub", err.getvalue())
 
 

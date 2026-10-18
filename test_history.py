@@ -19,7 +19,7 @@ from gutcheck import game as G
 from gutcheck import history
 from gutcheck import paths
 from gutcheck import seam as seam_mod
-from gutcheck.engine import STREETS, Hand
+from gutcheck.engine import Hand
 
 
 def _rec(n, **over):
@@ -333,8 +333,7 @@ class TestEndToEnd(unittest.TestCase):
 
     def test_stored_street_is_where_the_hand_ended(self):
         # 0.1.2 stored street="preflop" for every hand: pokerkit's street_index is None once a hand is
-        # over, and the record read it after the hand ended. Oracle: replay each stored log through the
-        # engine and take pokerkit's own street at the hand's last action.
+        # over, and the record read it after the hand ended. Oracle: the street the stored board reached.
         d = Path(tempfile.mkdtemp())
         hist = d / "history.db"
         g = G.Game(d / "session.json", d / "career.json", d / "sessions",
@@ -355,15 +354,14 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(sum(f["street"] == "preflop" and len(f["board"]) >= 3 for f in frames), 0)
         rows = history.get_history(0, path=hist)["hands"]
         self.assertTrue(rows)
+        by_board = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}
         for r in rows:
-            h = Hand(seed=r["seed"], small_blind=G.SB, big_blind=G.BB,
-                     starting_stacks=r["start_stacks"], action_log=[])
-            last = 0
-            for tok in r["log"]:
-                last = h.street_index
-                h.record(tok)
-            self.assertEqual(r["street"], STREETS[last], f"hand {r['hand_no']}")
+            self.assertEqual(r["street"], by_board[len(r["board"])], f"hand {r['hand_no']}")
         self.assertTrue(any(r["street"] != "preflop" for r in rows))   # the 0.1.2 signature: all preflop
+        # a preflop all-in runs the board out: the finished hand reads river, not the street betting ended on
+        allin = Hand(seed=1, small_blind=1, big_blind=2, starting_stacks=[10, 10], action_log=["r10", "c"])
+        self.assertTrue(allin.over)
+        self.assertEqual((len(allin.board()), allin.street_name()), (5, "river"))
 
 
 if __name__ == "__main__":

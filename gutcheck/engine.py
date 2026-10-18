@@ -41,6 +41,7 @@ _AUTOMATIONS = (
 # 6-max position names by pokerkit seat index (seat0=SB, seat1=BB).
 POSITIONS_6 = {0: "SB", 1: "BB", 2: "UTG", 3: "HJ", 4: "CO", 5: "BTN"}
 STREETS = {0: "preflop", 1: "flop", 2: "turn", 3: "river"}
+_BOARD_STREET = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}   # board cards dealt -> street
 
 
 def position_name(seat: int, n: int) -> str:
@@ -175,10 +176,10 @@ class Hand:
         return self.state.street_index or 0
 
     def street_name(self) -> str:
-        # pokerkit has no street once a hand is over (street_index is None after the chips are pushed);
-        # name the street of the hand's last action then, not "preflop"
-        if self.state.street_index is None and self.history:
-            return STREETS.get(self.history[-1]["street"], "?")
+        # pokerkit has no street once a hand is over (street_index is None after the chips are pushed), so
+        # name the street the board reached: an all-in run-out shows five cards, and so does the label
+        if self.state.street_index is None:
+            return _BOARD_STREET.get(len(self.board()), "?")
         return STREETS.get(self.street_index, "?")
 
     def board(self) -> list[str]:
