@@ -173,7 +173,7 @@ def leaks_db() -> Path:
     # The operator-owned, anneal-backed graduating-leak store (P4 — the moat). Lives in the data
     # dir next to calibration.json; OPTIONAL — only written when the `gutcheck[anneal]` extra is
     # installed (leakstore.py is a graceful no-op otherwise). anneal writes a sidecar continuity
-    # file (leaks.continuity.md) + an audit/ dir alongside it; reset_data() handles all three.
+    # file (leaks.continuity.md) + an audit chain (leaks.audit*) alongside it; reset_data() handles all three.
     return data_dir() / "leaks.db"
 
 
@@ -204,7 +204,7 @@ def reset_data() -> list[str]:
     # anneal's on-disk layout. The dep is bounded (>=0.8.5,<2), and anneal 1.0 adds an audit manifest
     # and lock files beside leaks.audit.jsonl: a sidecar missed here is NOT cosmetic, a surviving
     # manifest remembers the deleted chain and every later audit append refuses. So the audit family is
-    # cleared by the `leaks.audit*` glob below, not by a list of names. A blind `leaks.*` glob is
+    # cleared by the `leaks.audit*` glob below (locks excepted), not by a list of names. A blind `leaks.*` glob is
     # intentionally avoided: it would re-match the .reset-backup.* files this very block creates.
     # WAL COMPLETENESS (codex L3 MED-1): the leak db is WAL-mode, so committed rows can live in
     # leaks.db-wal until checkpointed (e.g. after a crashed prior run). Back up the WHOLE db set
@@ -227,8 +227,10 @@ def reset_data() -> list[str]:
         if (d / name).exists():                                     # training data → cleared, not backed up
             (d / name).unlink(missing_ok=True)            # tolerate a concurrent cleanup (TOCTOU)
             removed.append(name)
-    for f in sorted(d.glob("leaks.audit*")):              # anneal's audit chain + manifest + locks:
-        f.unlink(missing_ok=True)                          # fresh slate = fresh chain, all or none
+    for f in sorted(d.glob("leaks.audit*")):              # anneal's audit chain + manifest: fresh slate =
+        if not f.is_file() or f.name.endswith(".lock"):    # fresh chain. Locks stay: they are coordination
+            continue                                       # files, and unlinking a held one splits its mutex.
+        f.unlink(missing_ok=True)
         removed.append(f.name)
     for tmp in sorted(d.glob("*.tmp")):                   # pid-suffixed atomic-write temps (career/session/
         tmp.unlink(missing_ok=True)                        # settings — settings.json ITSELF is never removed,
