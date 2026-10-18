@@ -216,13 +216,67 @@ def _claude_argv(prompt: str) -> list[str]:
     ]
 
 
+# The `claude -p` children in flight right now. A worker that is told to stop (the server's shutdown, a
+# plain `kill`) reaps them: left alone they run on, re-parented to init, after the process that wanted
+# their answer is gone.
+_INFLIGHT: set = set()
+_INFLIGHT_LOCK = threading.Lock()
+
+
+_REAPED = False       # set by reap_inflight(): the process is shutting down, no new child may start
+
+
+def _run_tracked(argv: list[str], timeout: float, input: str | None = None, **kw) -> subprocess.CompletedProcess:
+    """subprocess.run, with the child registered in _INFLIGHT for its lifetime so reap_inflight() can
+    reach it. Same contract: TimeoutExpired after killing the child; OSError if it can't spawn (and
+    after reap_inflight(), so a call racing the shutdown degrades instead of starting an orphan)."""
+    if input is not None:
+        kw["stdin"] = subprocess.PIPE
+    with _INFLIGHT_LOCK:
+        if _REAPED:
+            raise OSError("coach shutting down")
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kw)
+        _INFLIGHT.add(proc)
+    with proc:
+        try:
+            try:
+                out, err = proc.communicate(input, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()               # NOT communicate(): a grandchild holding the pipes would block it forever
+                raise
+            return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+        finally:
+            with _INFLIGHT_LOCK:
+                _INFLIGHT.discard(proc)
+
+
+def reap_inflight() -> int:
+    """Terminate every in-flight `claude -p` child (SIGTERM, then SIGKILL after a short grace). Returns
+    how many were signalled. The call that owned each one sees a failed exit and degrades to the stub."""
+    global _REAPED
+    with _INFLIGHT_LOCK:
+        _REAPED = True
+        procs = list(_INFLIGHT)
+    for proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+    deadline = time.monotonic() + 2.0
+    for proc in procs:
+        try:
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return len(procs)
+
+
 def call_claude(prompt: str, timeout: float = CLAUDE_TIMEOUT) -> str:
     """Fire one headless `claude -p` and return the response text, or '' on ANY failure. '' is the
     caller's signal to fall back to the grounded stub — so the coach never hangs. Never raises."""
     try:
-        r = subprocess.run(
+        r = _run_tracked(
             _claude_argv(prompt),
-            capture_output=True, text=True, timeout=timeout,
+            timeout=timeout,
             stdin=subprocess.DEVNULL,        # never block waiting on stdin (the codex-hang class)
             cwd=str(HERE), env=_claude_env(),
         )
@@ -292,9 +346,9 @@ def call_codex(prompt: str, timeout: float = CLAUDE_TIMEOUT) -> str:
     try:
         fd, out_path = tempfile.mkstemp(prefix="fp_codex_", suffix=".txt")
         os.close(fd)
-        r = subprocess.run(
+        r = _run_tracked(
             [_codex_bin(), "exec", "--ephemeral", "--sandbox", "read-only", "-o", out_path],
-            input=prompt, capture_output=True, text=True, timeout=timeout,
+            input=prompt, timeout=timeout,
             cwd=str(HERE), env=_codex_env(),
         )
         if r.returncode != 0:
@@ -1034,6 +1088,8 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
     def _stopping() -> bool:
         return stop["flag"] or (stop_event is not None and stop_event.is_set())
 
+    claim_lease = max(coach.CLAIM_LEASE_S, 2 * CLAUDE_TIMEOUT + 30)   # outlasts any call this worker can make
+    worker_id = f"{os.getpid()}-{threading.get_ident()}"      # unique per loop, even two in one process
     breaker = _Breaker(BREAKER_THRESHOLD, BREAKER_COOLDOWN)
     if startup_probe and not once and not _stopping():   # a stop set before we start → skip the probe's claude call
         if not _probe_subscription(pick_runner()):
@@ -1058,6 +1114,12 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
         for req in pending:
             if _stopping():
                 break
+            try:                               # one worker per request: the loser skips, never spends
+                if not coach.claim(req["id"], worker_id, lease=claim_lease, path=db):
+                    continue
+            except Exception as e:             # transient sqlite error — leave the row for the next pass
+                print(f"[coach_daemon] claim #{req.get('id')} failed: {e!r} — will retry", file=sys.stderr)
+                continue
             try:
                 coaching_off = not is_enabled()            # the in-UI toggle (cost floor)
                 if coaching_off or _is_stale_decision(req, time.time()):  # per-request: a backlog can age a decision mid-pass
@@ -1097,9 +1159,13 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
             except Exception as e:             # a row-level / transient error must NOT kill the daemon
                 print(f"[coach_daemon] loop error on #{req.get('id')}: {e!r}", file=sys.stderr)
                 try:                           # drain the row so a persistent error can't busy-spin it
-                    coach.respond(req["id"], _SAFE_FALLBACK, db)
+                    if not coach.respond(req["id"], _SAFE_FALLBACK, db):
+                        coach.release(req["id"], worker_id, db)
                 except Exception:
-                    pass
+                    try:                       # the drain failed too: hand the claim back, don't sit on it for the lease
+                        coach.release(req["id"], worker_id, db)
+                    except Exception:
+                        pass
                 continue
 
         if not once and (time.monotonic() - last_clean) >= CLEAN_INTERVAL_S:

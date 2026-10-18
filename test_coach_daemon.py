@@ -389,46 +389,46 @@ class TestCodexRunner(unittest.TestCase):
     def test_pipes_prompt_on_stdin_and_reads_o_file(self):
         captured = {}
 
-        def fake_run(argv, input=None, **kw):
+        def fake_run(argv, timeout=None, input=None, **kw):
             captured["argv"], captured["input"] = argv, input
             Path(argv[argv.index("-o") + 1]).write_text("codex: value-bet bigger\n")  # codex writes -o
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        orig = coach_daemon.subprocess.run
-        coach_daemon.subprocess.run = fake_run
+        orig = coach_daemon._run_tracked
+        coach_daemon._run_tracked = fake_run
         try:
             out = coach_daemon.call_codex("THE PROMPT")
         finally:
-            coach_daemon.subprocess.run = orig
+            coach_daemon._run_tracked = orig
         self.assertEqual(out, "codex: value-bet bigger")   # read from the -o file, stripped
         self.assertEqual(captured["input"], "THE PROMPT")  # piped on stdin (EOF) …
         self.assertNotIn("THE PROMPT", captured["argv"])   # … NOT a positional arg (the hang class)
         self.assertIn("exec", captured["argv"])
 
     def test_nonzero_exit_returns_empty(self):
-        def fake_run(argv, input=None, **kw):
+        def fake_run(argv, timeout=None, input=None, **kw):
             return types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
 
-        orig = coach_daemon.subprocess.run
-        coach_daemon.subprocess.run = fake_run
+        orig = coach_daemon._run_tracked
+        coach_daemon._run_tracked = fake_run
         try:
             self.assertEqual(coach_daemon.call_codex("p"), "")  # failure → '' → grounded-stub fallback
         finally:
-            coach_daemon.subprocess.run = orig
+            coach_daemon._run_tracked = orig
 
     def test_no_orphan_temp_left(self):
         before = set(Path(tempfile.gettempdir()).glob("fp_codex_*.txt"))
 
-        def fake_run(argv, input=None, **kw):
+        def fake_run(argv, timeout=None, input=None, **kw):
             Path(argv[argv.index("-o") + 1]).write_text("x")
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        orig = coach_daemon.subprocess.run
-        coach_daemon.subprocess.run = fake_run
+        orig = coach_daemon._run_tracked
+        coach_daemon._run_tracked = fake_run
         try:
             coach_daemon.call_codex("p")
         finally:
-            coach_daemon.subprocess.run = orig
+            coach_daemon._run_tracked = orig
         after = set(Path(tempfile.gettempdir()).glob("fp_codex_*.txt"))
         self.assertEqual(after - before, set())            # the -o temp is unlinked in finally
 
@@ -439,12 +439,12 @@ class TestCallClaudeParsing(unittest.TestCase):
     def _run_with_fake_subprocess(self, returncode, stdout, stderr=""):
         import types
         fake = types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
-        orig = coach_daemon.subprocess.run
-        coach_daemon.subprocess.run = lambda *a, **k: fake
+        orig = coach_daemon._run_tracked
+        coach_daemon._run_tracked = lambda *a, **k: fake
         try:
             return coach_daemon.call_claude("prompt")
         finally:
-            coach_daemon.subprocess.run = orig
+            coach_daemon._run_tracked = orig
 
     def test_parses_json_result_field(self):
         out = self._run_with_fake_subprocess(0, json.dumps({"result": "  fold here  ", "is_error": False}))
@@ -474,6 +474,70 @@ class TestCallClaudeParsing(unittest.TestCase):
         # JSON shape drift (result is a dict) → '' rather than an AttributeError
         out = self._run_with_fake_subprocess(0, json.dumps({"result": {"x": 1}, "is_error": False}))
         self.assertEqual(out, "")
+
+
+class TestOneWorkerPerRequest(unittest.TestCase):
+    """spore-155, reproduced 10-17: the built-in coach and an external daemon on one coach.db each
+    fired `claude -p` for the same request (a stub on PATH logged two spot invocations for one ask)."""
+
+    def test_two_workers_on_one_channel_spend_once(self):
+        db = Path(tempfile.mkdtemp()) / "coach.db"
+        coach.ask("review", {"hand_no": 1, "summary": "x"}, db)
+        calls, lock = [], threading.Lock()
+
+        def slow_runner(prompt):
+            with lock:
+                calls.append(prompt)
+            time.sleep(0.6)                      # long enough that the second worker polls mid-call
+            return "coached"
+
+        workers = [threading.Thread(target=coach_daemon.run, kwargs=dict(once=True, runner=slow_runner, db=db))
+                   for _ in range(2)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(10)
+        self.assertEqual(len(calls), 1)          # one request, one spend
+        self.assertEqual(coach.get(1, db)["status"], "answered")
+
+    def test_a_dead_workers_claim_lapses(self):
+        db = Path(tempfile.mkdtemp()) / "coach.db"
+        rid = coach.ask("review", {"hand_no": 1}, db)
+        self.assertTrue(coach.claim(rid, "w1", path=db))
+        self.assertFalse(coach.claim(rid, "w2", path=db))                    # live claim holds
+        self.assertTrue(coach.claim(rid, "w2", lease=-1.0, path=db))          # lapsed claim is taken over
+
+
+class TestReapInflight(unittest.TestCase):
+    """spore-155 / codex MED-1, reproduced 10-17: killing the server mid-answer left the `claude -p`
+    child running, re-parented to init (ppid 1)."""
+
+    def test_reap_terminates_the_in_flight_child(self):
+        done = {}
+
+        def call():
+            done["r"] = coach_daemon._run_tracked(["sleep", "30"], timeout=60)
+
+        t = threading.Thread(target=call)
+        t.start()
+        for _ in range(100):                     # wait for the child to register
+            with coach_daemon._INFLIGHT_LOCK:
+                procs = list(coach_daemon._INFLIGHT)
+            if procs:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(procs), 1)
+        self.assertEqual(coach_daemon.reap_inflight(), 1)
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertIsNotNone(procs[0].returncode)                           # dead, not orphaned
+        self.assertNotEqual(done["r"].returncode, 0)
+        self.assertEqual(coach_daemon._INFLIGHT, set())
+        with self.assertRaises(OSError):                                    # a call racing the shutdown must not spawn
+            coach_daemon._run_tracked(["sleep", "30"], timeout=60)
+
+    def tearDown(self):
+        coach_daemon._REAPED = False
 
 
 class TestBreaker(unittest.TestCase):

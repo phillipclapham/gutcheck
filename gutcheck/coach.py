@@ -41,6 +41,10 @@ KINDS = ("decision", "review")
 # A coaching request that no worker ever answered is junk after this long — a stale
 # "flow is thinking…" the player long since clicked past. Pruned by clean().
 _PENDING_TTL_H = 6
+# A worker CLAIMS a request before it spends on it (claim()); an unfinished claim older than this is a
+# dead worker's, and any worker may take the request over. It outlasts the longest single answer (the
+# 90s provider watchdog plus the stub write), so a live worker is never overtaken mid-call.
+CLAIM_LEASE_S = 300.0
 # Bound a runaway worker reply: the writer is trusted (your own CC session / a launchd
 # daemon), but a giant response would bloat the row and ship whole to the browser on poll.
 _MAX_RESPONSE = 16 * 1024
@@ -73,23 +77,28 @@ def _conn(path: Path | None = None) -> sqlite3.Connection:
                status   TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'answered'
                response TEXT,                                -- the coach's prose
                meta     TEXT,                                -- JSON: opaque worker-computed blob
-               answered REAL                                 --   (the modeled-equity, for the drill reveal)
+               answered REAL,                                --   (the modeled-equity, for the drill reveal)
+               claimed_at REAL,                              -- claim(): when a worker took the request
+               claimed_by TEXT                               --   and which one
            )"""
     )
     key = str(path)
     if key not in _INITIALIZED:
         c.execute("PRAGMA journal_mode=WAL")  # persistent db property; set once per process per path
-        # An older coach.db predates `meta` — add it (cheap, one-time). Guarded by a column probe
-        # because ADD COLUMN errors if it already exists. The probe→ALTER is NOT atomic across
-        # PROCESSES, so a concurrent racer can add the column between our probe and our ALTER —
-        # swallow ONLY that duplicate-column error; a real lock/IO/read-only failure must propagate
-        # (swallowing it would mark this path _INITIALIZED with no meta column, breaking set_meta).
-        if "meta" not in {r[1] for r in c.execute("PRAGMA table_info(requests)")}:
-            try:
-                c.execute("ALTER TABLE requests ADD COLUMN meta TEXT")
-            except sqlite3.OperationalError as e:
-                if "duplicate column" not in str(e).lower():
-                    raise
+        # An older coach.db predates `meta` / `claimed_at` / `claimed_by` — add each (cheap, one-time).
+        # Guarded by a column probe because ADD COLUMN errors if it already exists. The probe→ALTER is
+        # NOT atomic across PROCESSES, so a concurrent racer can add the column between our probe and
+        # our ALTER — swallow ONLY that duplicate-column error; a real lock/IO/read-only failure must
+        # propagate (swallowing it would mark this path _INITIALIZED with a column missing, breaking
+        # set_meta / claim).
+        have = {r[1] for r in c.execute("PRAGMA table_info(requests)")}
+        for col, decl in (("meta", "TEXT"), ("claimed_at", "REAL"), ("claimed_by", "TEXT")):
+            if col not in have:
+                try:
+                    c.execute(f"ALTER TABLE requests ADD COLUMN {col} {decl}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
         _INITIALIZED.add(key)
     c.commit()
     return c
@@ -124,6 +133,33 @@ def pending(path: Path | None = None) -> list[dict]:
             "SELECT * FROM requests WHERE status='pending' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def claim(req_id: int, worker: str, lease: float = CLAIM_LEASE_S, path: Path | None = None) -> bool:
+    """Take a pending request for `worker` before spending on it. One atomic UPDATE: of any number of
+    workers (the built-in coach plus an external daemon, on one channel), exactly one gets True; the
+    rest must skip the request. A claim the worker never finished (it died) lapses after `lease`
+    seconds, and the next claimer takes the request over."""
+    now = time.time()
+    with contextlib.closing(_conn(path)) as c, c:
+        cur = c.execute(
+            "UPDATE requests SET claimed_at=?, claimed_by=? "
+            "WHERE id=? AND status='pending' AND (claimed_at IS NULL OR claimed_at < ?)",
+            (now, worker, req_id, now - lease),
+        )
+        return cur.rowcount > 0
+
+
+def release(req_id: int, worker: str, path: Path | None = None) -> bool:
+    """Hand a still-pending request back (the claimer could not answer it), so the next pass need not
+    wait out the lease. A no-op unless `worker` still holds the claim."""
+    with contextlib.closing(_conn(path)) as c, c:
+        cur = c.execute(
+            "UPDATE requests SET claimed_at=NULL, claimed_by=NULL "
+            "WHERE id=? AND status='pending' AND claimed_by=?",
+            (req_id, worker),
+        )
+        return cur.rowcount > 0
 
 
 def get(req_id: int, path: Path | None = None) -> dict | None:

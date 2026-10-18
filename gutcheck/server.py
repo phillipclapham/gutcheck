@@ -20,6 +20,7 @@ import ipaddress
 import os
 import json
 import hashlib
+import signal
 import socket
 import sys
 import threading
@@ -205,9 +206,8 @@ def _run_coach(db: Path, stop: threading.Event, leak_store=None) -> None:
     (the daemon warns + degrades to the honest stub). Real coaching needs `gutcheck` started from a
     plain terminal with `claude` logged in. --no-coach skips this entirely (run your own worker).
 
-    Run exactly ONE worker on a channel: this built-in loop AND an external coach_daemon/launchd both
-    polling the same coach.db will each fire `claude -p` on every request — idempotent (coach.respond
-    is conditional, so no torn answer / corruption) but a wasted duplicate subscription call."""
+    A second worker (an external coach_daemon/launchd) on the same coach.db is safe: each request is
+    claimed by one worker before it is coached (coach.claim)."""
     try:
         coach_daemon._warn_if_nested()        # started inside a CC session → say so (claude -p gets killed)
         # startup_probe=False (embedded only): the standalone daemon probes because the operator starts
@@ -776,8 +776,7 @@ def main() -> int:
                     help="don't auto-open a browser (e.g. when serving the iPad over Tailscale)")
     ap.add_argument("--no-coach", action="store_true",
                     help="don't run the built-in coach — use this if you run your OWN worker "
-                         "(`python -m gutcheck.coach_daemon run` / launchd) on the same channel. Run exactly ONE "
-                         "worker: a built-in AND an external daemon both fire claude on every request.")
+                         "(`python -m gutcheck.coach_daemon run` / launchd) on the same channel.")
     args = ap.parse_args()
 
     if not 1 <= args.port <= 65535:
@@ -850,9 +849,12 @@ def main() -> int:
     # The built-in coach: a background thread runs the full coach_daemon loop (flow on the Claude
     # subscription, degrading to honest facts-only when that path is down) so the felt-sense loop
     # works from `gutcheck` alone. daemon=True → it dies with the process; coach_stop ends the LOOP
-    # cleanly between requests. An in-flight `claude -p` child is NOT reaped — the parent-side timeout
-    # stops applying once we exit; the child runs to completion and is reaped by launchd (a benign
-    # transient orphan for a local tool). --no-coach turns it off when you run your own worker.
+    # cleanly between requests, and the shutdown below reaps an in-flight `claude -p` child. --no-coach
+    # turns it off when you run your own worker; a worker started anyway no longer double-fires,
+    # because each request is claimed (coach.claim) before anyone spends on it.
+    def _on_term(_signum, _frame):      # a plain `kill`: take the same clean exit as Ctrl-C, so the finally runs
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _on_term)
     coach_stop = threading.Event()
     coach_thread = None
     if not args.no_coach:
@@ -886,6 +888,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nstopped.")
     finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)   # a second kill must not interrupt the cleanup below
         coach_stop.set()        # signal the coach thread to exit cleanly (a daemon would die anyway)
         if coach_thread is not None:
             # bounded join so the loop can finish its current pass + close its leak-store connection
@@ -893,6 +896,9 @@ def main() -> int:
             # seed author call is in flight it may outlast this — the daemon=True thread then dies with the
             # process and any open leak wrap is reclaimed by the next run's recover (F6). [codex L3 MED-2]
             coach_thread.join(timeout=3.0)
+        coach_daemon.reap_inflight()    # the built-in coach's `claude -p` child must not outlive the server
+        if coach_thread is not None:
+            coach_thread.join(timeout=2.0)   # let the reaped call write its stub answer before we exit
     return 0
 
 
