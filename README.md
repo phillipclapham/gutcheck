@@ -21,7 +21,7 @@ That opens a table in your browser at `http://127.0.0.1:8777`. Everything runs o
 
 This is how I actually use it. Start `gutcheck`, then open a Claude Code session with the gutcheck MCP server added (`pip install "gutcheck[mcp]"`, then `claude mcp add gutcheck -- gutcheck-mcp`, once). Now Claude can see the table you're sitting at, your hand history and your read stats, and you just talk it out while you play. What do you make of the guy who keeps check-raising? Was that fold as bad as it felt? Where are my reads drifting?
 
-It answers from what's actually on the table and in your history, not from vibes. And it only knows what you could know: the coach's tools never hand over the bots' hidden styles or their cards mid-hand, so it can't read them for you. It has to read them with you. That gate is on the tool surface, by design. On the local stdio path the coach is a trusted process on your own machine, and a coach that runs code could dig the deal out of your replay seeds or session file; the remote transport leaves the seeds out and doesn't expose the answer key at all. It can't play your hands either. The clicking stays yours.
+It answers from what's actually on the table and in your history, not from vibes. And it only knows what you could know: the coach's tools never hand over the bots' hidden styles or their cards mid-hand, so it can't read them for you. It has to read them with you. That gate is built into the coach's tools by design. Run locally, the coach is a trusted process on your own machine; over the remote connection the answer key never leaves the server. It can't play your hands either. The clicking stays yours.
 
 ## Why this exists
 
