@@ -1050,8 +1050,9 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
         coaching_enabled=None, provider=None, leak_store=None) -> int:
     """Poll the channel and answer pending requests. SIGTERM/SIGINT (launchctl unload, Ctrl-C) stops
     the loop cleanly BETWEEN requests; a `claude -p` call already in flight runs to completion or its
-    timeout first (launchd may SIGKILL it after the grace window — harmless: the row just stays
-    pending for the next run, which answer_one re-answers safely). Carries a half-open circuit breaker
+    timeout first (launchd may SIGKILL it after the grace window — the row stays pending, but the
+    dead worker's claim holds it until the lease lapses, so the next run re-answers it after
+    max(coach.CLAIM_LEASE_S, 2*CLAUDE_TIMEOUT+30) seconds, not at once). Carries a half-open circuit breaker
     (a wedged claude → serve stubs), stale-decision expiry, and periodic channel pruning.
 
     Embeddable (the in-process path — server.py runs this in a background thread): pass

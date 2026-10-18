@@ -715,5 +715,42 @@ class TestSeamRecallWrapper(unittest.TestCase):
             self.assertIn("unavailable", resp["reason"])
 
 
+@unittest.skipUnless(HAS_ANNEAL, _SKIP)
+class TestResetKeepsTheAuditChainWhole(unittest.TestCase):
+    """`gutcheck --reset` must leave a leak store whose audit chain still verifies after reuse
+    (anneal 1.0 keeps a manifest + lock files beside the audit jsonl; a survivor refuses every append)."""
+
+    def _cycle(self, d):
+        ls = LeakStore(d / "leaks.db")
+        for i in (1, 2):
+            ls.record_read_episode({"session_id": "s", "hand_no": i, "n": 1, "gut": 60, "lean": "value",
+                                    "truth_pct": 30.0, "street": "flop", "note": "x"})
+        wrap = ls.prepare_leak_wrap()
+        doc = _leak_doc("sizing_is_a_read_output", 1, _newest_ids(ls, 2),
+                        "bet small to protect a marginal hand, bet big to get paid by one")
+        self.assertIsNotNone(ls.commit_leaks(doc, wrap["wrap_token"]))
+        ls.close()
+
+    def test_audit_chain_verifies_after_reset_and_reuse(self):
+        import os
+        from anneal_memory.audit import AuditTrail
+        if not hasattr(AuditTrail, "verify"):
+            self.skipTest("this anneal-memory predates the audit chain verifier")
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            saved = os.environ.get(paths.ENV_VAR)
+            os.environ[paths.ENV_VAR] = tmp
+            try:
+                self._cycle(d)
+                paths.reset_data()
+                self._cycle(d)
+            finally:
+                if saved is None:
+                    os.environ.pop(paths.ENV_VAR, None)
+                else:
+                    os.environ[paths.ENV_VAR] = saved
+            self.assertTrue(AuditTrail.verify(d / "leaks.db").valid)
+
+
 if __name__ == "__main__":
     unittest.main()

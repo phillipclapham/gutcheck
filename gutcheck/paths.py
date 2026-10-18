@@ -200,11 +200,12 @@ def reset_data() -> list[str]:
     # the graduated-leak memory (anneal, P4) is precious operator data — back up the db + the leaks
     # doc like calibration so a clean-slate reset is one-level recoverable; the metadata, audit chain,
     # and wal/shm are regenerable and get cleared below for a fresh slate (a fresh store = fresh chain).
-    # COUPLING NOTE (L2 L3): the sidecar names below (leaks.continuity.md / .meta.json / leaks.audit.jsonl
-    # / -wal / -shm) are anneal's on-disk layout, verified for 0.8.5. The dep is floor-pinned (>=0.8.5),
-    # so RE-VERIFY these filenames on an anneal bump — a renamed sidecar would orphan a file here
-    # (cosmetic + recoverable, not a correctness bug). A blind `leaks.*` glob is intentionally avoided:
-    # it would re-match the .reset-backup.* files this very block creates.
+    # COUPLING NOTE: the sidecar names below (leaks.continuity.md / .meta.json / -wal / -shm) are
+    # anneal's on-disk layout. The dep is bounded (>=0.8.5,<2), and anneal 1.0 adds an audit manifest
+    # and lock files beside leaks.audit.jsonl: a sidecar missed here is NOT cosmetic, a surviving
+    # manifest remembers the deleted chain and every later audit append refuses. So the audit family is
+    # cleared by the `leaks.audit*` glob below, not by a list of names. A blind `leaks.*` glob is
+    # intentionally avoided: it would re-match the .reset-backup.* files this very block creates.
     # WAL COMPLETENESS (codex L3 MED-1): the leak db is WAL-mode, so committed rows can live in
     # leaks.db-wal until checkpointed (e.g. after a crashed prior run). Back up the WHOLE db set
     # (db + -wal + -shm) together so the backup isn't a stale, tail-missing copy — never delete the
@@ -222,10 +223,13 @@ def reset_data() -> list[str]:
     for name in ("career.corrupt.json", "session.json",
                  "coach.db", "coach.db-wal", "coach.db-shm",
                  "history.db", "history.db-wal", "history.db-shm",
-                 "leaks.continuity.meta.json", "leaks.audit.jsonl"):   # regenerable; fresh slate = fresh chain
+                 "leaks.continuity.meta.json"):                              # regenerable
         if (d / name).exists():                                     # training data → cleared, not backed up
             (d / name).unlink(missing_ok=True)            # tolerate a concurrent cleanup (TOCTOU)
             removed.append(name)
+    for f in sorted(d.glob("leaks.audit*")):              # anneal's audit chain + manifest + locks:
+        f.unlink(missing_ok=True)                          # fresh slate = fresh chain, all or none
+        removed.append(f.name)
     for tmp in sorted(d.glob("*.tmp")):                   # pid-suffixed atomic-write temps (career/session/
         tmp.unlink(missing_ok=True)                        # settings — settings.json ITSELF is never removed,
         removed.append(tmp.name)                           # but a crash-orphaned settings temp is fair to sweep)

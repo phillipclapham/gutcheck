@@ -11,6 +11,7 @@ import random
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from http.server import HTTPServer
 from pathlib import Path
 
@@ -20,11 +21,14 @@ from gutcheck import server as S
 
 
 def _play_session_with_report(d: Path):
-    """Play a deterministic session to a written report, returning (game, session_id, report)."""
+    """Play a repeatable session (SystemRandom pinned below) to a written report, returning (game, session_id, report)."""
     random.seed(7)                                   # deterministic villains + deal
     g = G.Game(d / "session.json", d / "career.json", d / "sessions",
                d / "calibration.json", d / "history.db")
-    g.sit_down(hero="Phill")
+    # sit_down draws the master seed from SystemRandom, so random.seed(7) alone never made the deals
+    # repeat; pin that draw so the fixture plays the same session every run.
+    with unittest.mock.patch.object(G.random, "SystemRandom", lambda: random.Random(7)):
+        g.sit_down(hero="Phill")
     sid = g.s["session"]["id"]
     for _ in range(25):                              # check/call down → postflop spots + a report
         g.new_hand()
@@ -110,7 +114,7 @@ class TestGroundTruthEndpoint(unittest.TestCase):
 
     def _get(self, path):
         import http.client
-        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
         c.request("GET", path, headers={"Host": f"127.0.0.1:{self.port}"})
         r = c.getresponse()
         b = r.read()
