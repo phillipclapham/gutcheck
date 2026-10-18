@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import html
 import http.client
+import ipaddress
 import json
 import logging
 import os
@@ -305,6 +306,22 @@ def _base() -> str:
     return os.environ.get("GUTCHECK_URL", _DEFAULT_URL).rstrip("/")
 
 
+# A loopback game server is never behind a proxy, but urlopen honours http_proxy / the system proxy for
+# 127.0.0.1 too: with one exported (and no loopback no_proxy) every tool said the game was unreachable
+# while it was up. Loopback connects directly; any other GUTCHECK_URL keeps the default opener, since a
+# tailnet address can be reachable only through a proxy (Tailscale userspace networking).
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _open(req: urllib.request.Request, timeout: float):
+    host = (urllib.parse.urlsplit(req.full_url).hostname or "").lower()
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    return (_DIRECT.open if loopback else urllib.request.urlopen)(req, timeout=timeout)
+
+
 def _frame_origin() -> str | None:
     """The game-server origin to FRAME in the ui:// table — DERIVED + validated to a clean http(s)
     ``scheme://netloc`` (host[:port], no path/query/fragment, no userinfo). Returns None if GUTCHECK_URL
@@ -324,8 +341,8 @@ def _request(method: str, path: str, params: dict | None = None, body: dict | No
     clean, model-actionable message — we sanitize here rather than rely on SDK error masking, so no
     internals leak to the model regardless of the SDK version."""
     try:
-        # build the URL + request INSIDE the guard: a malformed GUTCHECK_URL (e.g. missing scheme)
-        # makes urlopen raise a raw ValueError, which must still become a clean ToolError (codex+kimi L3).
+        # build the URL + request INSIDE the guard: a malformed GUTCHECK_URL (e.g. missing scheme) makes
+        # Request() or the opener raise a raw ValueError, which must still become a clean ToolError (codex+kimi L3).
         url = _base() + path
         if params:
             clean = {k: v for k, v in params.items() if v is not None}
@@ -335,7 +352,7 @@ def _request(method: str, path: str, params: dict | None = None, body: dict | No
         req = urllib.request.Request(
             url, data=data, method=method,
             headers={"Content-Type": "application/json"} if data is not None else {})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+        with _open(req, _TIMEOUT) as r:
             raw = r.read().decode()
         return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
@@ -367,7 +384,7 @@ def _request(method: str, path: str, params: dict | None = None, body: dict | No
     except UnicodeDecodeError:                   # subclass of ValueError — a non-UTF8 response body
         raise ToolError(f"gutcheck game server returned a non-UTF8 response for {path}.")
     except ValueError as e:
-        # malformed URL (bad GUTCHECK_URL) raised by Request/urlopen before any network call
+        # malformed URL (bad GUTCHECK_URL) raised by Request() or the opener before any network call
         raise ToolError(f"gutcheck request URL was malformed ({e}); check GUTCHECK_URL "
                         f"(currently {_base()!r}).")
 

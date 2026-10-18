@@ -3,8 +3,8 @@
 Covers everything in the Slice-2 worker that does NOT need a real `claude` call: prompt
 construction, the claude→stub graceful-degradation fallback, channel integration + idempotency,
 the signal-clean run loop, env-stripping, and the coach_watch.format_spot refactor. The actual
-`claude -p` invocation (call_claude) is verified out-of-session via `python -m gutcheck.coach_daemon smoke` — it
-can't run inside a CC session (the nesting gotcha), so here it's stubbed via the injectable runner.
+`claude -p` invocation (call_claude) is verified via `python -m gutcheck.coach_daemon smoke` — it needs a
+logged-in `claude` and spends a real call, so here it's stubbed via the injectable runner.
 
     ./venv/bin/python test_coach_daemon.py
 """
@@ -351,6 +351,30 @@ class TestRunLoop(unittest.TestCase):
         coach_daemon.run(once=True, db=self.tmp, startup_probe=False, provider=lambda: "codex",
                          runner=lambda p: (seen.append("injected") or "x"))
         self.assertEqual(seen, ["injected"])
+
+
+class TestNoFalseNestingWarning(unittest.TestCase):
+    def test_coach_started_inside_claude_code_does_not_announce_the_stub(self):
+        # 0.1.2 printed "every answer will fall back to the stub" whenever CLAUDECODE was set, but
+        # _claude_env strips the nesting sentinels and a gutcheck started from a Claude Code session
+        # answered via claude (claude=1 stub=0). The warning told the player coaching was broken.
+        import contextlib
+        import io
+        from gutcheck import server as srv
+        saved = os.environ.get("CLAUDECODE")
+        os.environ["CLAUDECODE"] = "1"
+        stop = threading.Event()
+        stop.set()                                   # the loop exits at once; only startup output runs
+        err = io.StringIO()
+        try:
+            with tempfile.TemporaryDirectory() as td, contextlib.redirect_stderr(err):
+                srv._run_coach(Path(td) / "coach.db", stop)
+        finally:
+            if saved is None:
+                os.environ.pop("CLAUDECODE", None)
+            else:
+                os.environ["CLAUDECODE"] = saved
+        self.assertNotIn("fall back to the stub", err.getvalue())
 
 
 class TestClaudeEnv(unittest.TestCase):

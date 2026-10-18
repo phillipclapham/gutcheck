@@ -202,18 +202,17 @@ def _run_coach(db: Path, stop: threading.Event, leak_store=None) -> None:
     stale-decision expiry, and channel pruning. Signal handlers are OFF (the main thread owns those —
     registering off a thread raises); `stop` (set on shutdown) ends the loop within ~0.25s.
 
-    NESTING: `claude -p` is killed if `gutcheck` is launched from INSIDE a Claude Code session
-    (the daemon warns + degrades to the honest stub). Real coaching needs `gutcheck` started from a
-    plain terminal with `claude` logged in. --no-coach skips this entirely (run your own worker).
+    Real coaching needs `claude` logged in. Starting `gutcheck` from inside a Claude Code session is
+    fine: _claude_env strips the nesting sentinels from the child. --no-coach skips this entirely (run
+    your own worker).
 
     A second worker (an external coach_daemon/launchd) on the same coach.db is safe: each request is
     claimed by one worker before it is coached (coach.claim)."""
     try:
-        coach_daemon._warn_if_nested()        # started inside a CC session → say so (claude -p gets killed)
         # startup_probe=False (embedded only): the standalone daemon probes because the operator starts
         # it deliberately; embedded, a slow/hung probe would block the loop before the first request is
         # served, so a hand-1 decision could age toward the stale window. The breaker trips on the first
-        # real request instead, and _warn_if_nested covers the common "why is coaching offline" case.
+        # real request instead.
         # coaching_enabled + provider wire the in-UI settings to the worker (both read per-request, so
         # toggling coaching off → zero-claude facts floor, and switching provider → claude|codex, are LIVE).
         # leak_store (P4b-ii): the daemon DRIVES leak-seeding mid-session on ITS thread — the same

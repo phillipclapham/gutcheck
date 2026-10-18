@@ -124,6 +124,23 @@ class TestMcpProxy(unittest.TestCase):
         self.assertEqual({"hands", "watermark", "count"}, set(d) & {"hands", "watermark", "count"})
         self.assertGreater(d["count"], 0)
 
+    def test_reaches_game_with_a_proxy_in_the_environment(self):
+        # 0.1.2: urlopen honoured http_proxy for the loopback game server, so with a proxy exported in the
+        # shell that launched the MCP client every tool reported the game 'unreachable' while it was up.
+        saved = {k: os.environ.get(k) for k in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY")}
+        try:
+            for k in ("no_proxy", "NO_PROXY"):
+                os.environ.pop(k, None)
+            os.environ["http_proxy"] = os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"   # nothing listens
+            d = self._call(self.M.build_server(expose_ground_truth=True), "get_table_state", {})
+            self.assertIn("seated", d)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
     def test_get_calibration_proxies(self):
         d = self._call(self.M.build_server(expose_ground_truth=True), "get_calibration", {})
         self.assertTrue(set(d) & {"exact", "modeled"})        # the calibration shape

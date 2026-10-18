@@ -14,12 +14,13 @@ Slice-1 design intended: Slice 2 swaps only the worker. Villains stay coded; onl
     python -m gutcheck.coach_daemon smoke          # fire ONE trivial claude -p call; print result + timing
                                                     #   (verify the subscription path on THIS machine)
 
-WHY A STANDALONE PROCESS — the nesting gotcha: Claude Code refuses to spawn `claude` from inside a
-`claude` session (it detects nesting via CLAUDECODE / CLAUDE_CODE_* and the child dies silently). So
-this daemon must run OUTSIDE any CC session: a plain terminal, a backgrounded process, or the launchd
-agent (a launchd plist, for example). It also strips those vars itself
-(belt-and-suspenders) AND strips ANTHROPIC_API_KEY so the spawned `claude` rides the Max subscription,
-not metered API billing — the whole point of the "coach on the subscription" design.
+WHY A STANDALONE PROCESS: coaching then needs no open CC session. The nesting gotcha is why the child
+env matters: Claude Code refuses to run `claude` as a child of a session when it sees CLAUDECODE /
+CLAUDE_CODE_* in its env, and the child dies silently. _claude_env strips those vars, so the daemon (and
+the built-in worker) also works when started from inside a session; a gutcheck started from a Claude
+Code session answered via claude on 2026-10-18. It also strips ANTHROPIC_API_KEY so the spawned `claude`
+rides the Max subscription, not metered API billing — the whole point of the "coach on the subscription"
+design.
 
 GRACEFUL DEGRADATION (a hard floor): every request is ALWAYS answered and ALWAYS leaves the queue —
 via claude -p, else the grounded stub (claude failed), else a safe fallback line (a malformed spot
@@ -1244,27 +1245,17 @@ def answer_id(req_id: int, db=None) -> int:
 
 def smoke() -> int:
     """Fire ONE trivial claude -p call and report result + timing. The out-of-session verification
-    path: run this in a plain terminal (NOT inside a CC session) to confirm the subscription call
-    works on this machine before trusting the daemon."""
+    path: run this to confirm the subscription call works on this machine before trusting the daemon."""
     t0 = time.time()
     out = call_claude("Reply with exactly one word, nothing else: PONG", timeout=CLAUDE_TIMEOUT)
     dt = time.time() - t0
     ok = "PONG" in out.upper()
     result = {"ok": ok, "elapsed_s": round(dt, 1), "response": out[:200]}
     if not out:
-        result["reason"] = ("claude -p returned nothing — a timeout, spawn error, is_error, or "
-                            "(if run inside a CC session) nesting detection. See stderr above.")
+        result["reason"] = ("claude -p returned nothing — a timeout, spawn error, is_error, or a "
+                            "logged-out claude. See stderr above.")
     print(json.dumps(result, indent=2))
     return 0 if ok else 1
-
-
-def _warn_if_nested() -> None:
-    """The claude-spawning subcommands silently degrade to all-stub inside a CC session (nesting
-    detection kills the child). Make that footgun loud instead of silent."""
-    if os.environ.get("CLAUDECODE"):
-        print("[coach_daemon] ⚠ running INSIDE a Claude Code session — `claude -p` spawns are killed "
-              "by nesting detection, so every answer will fall back to the stub. Run this from a "
-              "PLAIN terminal or via launchd.", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1282,13 +1273,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     if args.cmd == "run":
-        _warn_if_nested()
         return run(once=args.once, interval=args.interval)
     if args.cmd == "answer":
-        _warn_if_nested()
         return answer_id(args.id)
     if args.cmd == "smoke":
-        _warn_if_nested()
         return smoke()
     return 2
 

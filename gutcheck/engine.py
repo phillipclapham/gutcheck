@@ -175,6 +175,10 @@ class Hand:
         return self.state.street_index or 0
 
     def street_name(self) -> str:
+        # pokerkit has no street once a hand is over (street_index is None after the chips are pushed);
+        # name the street of the hand's last action then, not "preflop"
+        if self.state.street_index is None and self.history:
+            return STREETS.get(self.history[-1]["street"], "?")
         return STREETS.get(self.street_index, "?")
 
     def board(self) -> list[str]:
