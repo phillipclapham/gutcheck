@@ -120,7 +120,7 @@ _UI_HANDSHAKE_JS = """
       if(m.error) p.rej(m.error); else p.res(m.result); return; }
     if(m.method==='ui/notifications/tool-result'&&window.fpDraw) window.fpDraw(m.params&&m.params.structuredContent);
   });
-  request('ui/initialize',{protocolVersion:'%(ver)s',appInfo:{name:'gutcheck Table',version:'0.1.2'},appCapabilities:{}})
+  request('ui/initialize',{protocolVersion:'%(ver)s',appInfo:{name:'gutcheck Table',version:'0.1.3'},appCapabilities:{}})
     .then(function(r){
       notify('ui/notifications/initialized');
       notify('ui/notifications/size-changed',{width:document.documentElement.clientWidth,height:%(h)d});

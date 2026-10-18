@@ -23,7 +23,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gutcheck"
-version = "0.1.2"
+version = "0.1.3"
 description = "A poker reading trainer: commit your read, then see the real equity."
 readme = "README.md"
 license = {text = "Apache-2.0"}
