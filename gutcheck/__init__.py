@@ -10,4 +10,4 @@ All runtime state lives OUTSIDE the package, under ``~/.gutcheck`` (override wit
 ``GUTCHECK_DATA_DIR``) — see ``gutcheck.paths`` — so a read-only wheel install is safe.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
