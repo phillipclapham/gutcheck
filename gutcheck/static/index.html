@@ -1129,7 +1129,7 @@ async function pollCoach(id, gen, tries=0){
   // falls back to facts). Poll PAST that ceiling (+margin) before declaring failure — the old 60s
   // budget quit while the daemon was still working — and reassure once it runs long so a real read
   // doesn't read as a hang.
-  if(tries>85){ answeredCoach("⚠ no coach answered in ~100s — check the server log: is it running without --no-coach, and is claude logged in on this machine?"); return; }
+  if(tries>85){ answeredCoach("⚠ no coach answered in ~100s — check the server log: is it running with --no-coach and no coach worker of your own, or did the coach worker crash?"); return; }
   if(tries===18){ const el=document.querySelector("#coachpanel .thinking"); if(el) el.textContent="the coach is going deep — a full read can take 30–60s…"; }
   setTimeout(()=>pollCoach(id, gen, tries+1), 1200);
 }
