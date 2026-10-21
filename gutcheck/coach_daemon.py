@@ -1177,8 +1177,9 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                                                    db=db, success_source=get_provider())
                     # an attempt capped below the full timeout failing says nothing about the provider's
                     # health (a cold call needs more than 10-20s): only a success counts from a capped one
+                    # (a cap above half the full timeout is near-full and counts as a normal attempt)
                     transition = (breaker.record(source)
-                                  if time_left >= CLAUDE_TIMEOUT or source == get_provider() else None)
+                                  if time_left >= CLAUDE_TIMEOUT / 2 or source not in ("stub", "error") else None)
                     if transition == "open":
                         print(f"[coach_daemon] ⚠ CIRCUIT BREAKER OPEN — coach provider failing; serving stubs "
                               f"for {BREAKER_COOLDOWN:.0f}s", file=sys.stderr)
