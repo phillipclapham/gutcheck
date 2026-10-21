@@ -287,6 +287,25 @@ class TestRunLoop(unittest.TestCase):
         coach_daemon.run(once=True, runner=lambda p: (calls.append(p) or "x"), db=self.tmp)
         self.assertEqual(len(calls), 1)                    # nothing pending the second time
 
+    def test_ask_that_waited_gets_a_timeout_inside_the_ui_budget(self):
+        # a review that sat behind a leak-seed pass has less of the UI's ~103s poll left: its runner
+        # timeout is capped to what remains; one with under MIN_ASK_S left is never sent to the runner.
+        waited = coach.ask("review", _decision_ctx(), self.tmp)
+        spent = coach.ask("review", _decision_ctx(), self.tmp)
+        with coach._conn(self.tmp) as c:
+            c.execute("UPDATE requests SET created=? WHERE id=?", (time.time() - 50, waited))
+            c.execute("UPDATE requests SET created=? WHERE id=?", (time.time() - 90, spent))
+        seen = []
+
+        def runner(prompt, timeout=None):
+            seen.append(timeout)
+            return "prose"
+
+        coach_daemon.run(once=True, runner=runner, db=self.tmp)
+        self.assertEqual(len(seen), 1)                      # the 90s-old request never reached the runner
+        self.assertLessEqual(seen[0], coach_daemon.UI_ASK_BUDGET_S - 50 + 1)
+        self.assertEqual(coach.poll(spent, self.tmp)["status"], "answered")   # …but was still answered (stub)
+
     def test_coaching_off_serves_facts_floor_without_calling_claude(self):
         # the in-UI toggle OFF (settings.coaching_enabled → False): the worker answers from the
         # honest facts floor and NEVER invokes the claude runner — zero spend. The request still

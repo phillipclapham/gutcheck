@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import inspect
 import json
 import os
 import re
@@ -132,6 +133,12 @@ BREAKER_COOLDOWN = float(os.environ.get("GUTCHECK_COACH_COOLDOWN", "60"))
 # late answer (the app bumps its COACH_GEN epoch on every action). Expire it instead of spending a
 # subscription call + blocking the queue on an answer nobody sees. Reviews are not time-sensitive.
 STALE_DECISION_S = float(os.environ.get("GUTCHECK_COACH_STALE", "25"))
+# The UI's pollCoach gives up on a coach ask after about 100s (its tries budget). A request that sat behind the
+# synchronous leak-seed pass (up to LEAK_SEED_AUTHOR_TIMEOUT) and then ran a full CLAUDE_TIMEOUT answer
+# would land after that, silently. The answer's timeout is capped to what is left of this budget, and a
+# request with too little left gets the facts stub at once.
+UI_ASK_BUDGET_S = float(os.environ.get("GUTCHECK_COACH_UI_BUDGET", "95"))
+MIN_ASK_S = 10.0
 # coach.clean()'s TTL only fires if something calls it; the always-on daemon is its natural home.
 CLEAN_INTERVAL_S = 60.0
 
@@ -771,6 +778,25 @@ def _stub_only(_prompt: str) -> str:
     return ""
 
 
+def _ask_time_left(req: dict, now: float) -> float:
+    """Seconds of the UI poll budget left for this request (unparseable `created` -> the full budget)."""
+    try:
+        return UI_ASK_BUDGET_S - (now - float(req.get("created", now)))
+    except (TypeError, ValueError):
+        return UI_ASK_BUDGET_S
+
+
+def _bounded(runner, timeout: float):
+    """`runner` with its call timeout capped, if it takes one (production runners do; test lambdas take
+    only the prompt and pass through)."""
+    try:
+        if "timeout" not in inspect.signature(runner).parameters:
+            return runner
+    except (TypeError, ValueError):
+        return runner
+    return functools.partial(runner, timeout=timeout)
+
+
 def _is_stale_decision(req: dict, now: float) -> bool:
     """A 'decision' request older than the staleness window is moot — the player has acted. Reviews
     are never stale (hindsight coaching is useful whenever it lands). Defensive: an unparseable
@@ -1124,7 +1150,8 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                 continue
             try:
                 coaching_off = not is_enabled()            # the in-UI toggle (cost floor)
-                if coaching_off or _is_stale_decision(req, time.time()):  # per-request: a backlog can age a decision mid-pass
+                time_left = _ask_time_left(req, time.time())
+                if coaching_off or _is_stale_decision(req, time.time()) or time_left < MIN_ASK_S:  # per-request: a backlog can age a decision mid-pass
                     # coaching toggled OFF, or the decision aged past the live window: skip the
                     # claude SPEND either way, but still answer with the honest facts-only floor —
                     # a still-polling player (the browser polls ~60s) gets band / equity / pot-odds,
@@ -1137,13 +1164,15 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                     responded, source = answer_one(req, runner=_stub_only, db=db, facts_mode=coaching_off)
                     if responded:
                         served[source] = served.get(source, 0) + 1
-                    reason = "coaching OFF" if coaching_off else "stale decision"
+                    reason = ("coaching OFF" if coaching_off else
+                              "stale decision" if _is_stale_decision(req, time.time()) else
+                              "UI budget spent waiting behind another pass")
                     print(f"[coach_daemon] {reason} #{req['id']} → facts-only stub (no claude spend) "
                           f"[{_tally(served)}]", file=sys.stderr)
                     continue
                 if breaker.should_call_claude():
-                    responded, source = answer_one(req, runner=pick_runner(), db=db,
-                                                   success_source=get_provider())
+                    responded, source = answer_one(req, runner=_bounded(pick_runner(), min(CLAUDE_TIMEOUT, time_left)),
+                                                   db=db, success_source=get_provider())
                     transition = breaker.record(source)
                     if transition == "open":
                         print(f"[coach_daemon] ⚠ CIRCUIT BREAKER OPEN — coach provider failing; serving stubs "
