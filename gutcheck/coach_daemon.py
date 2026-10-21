@@ -1150,8 +1150,10 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                 continue
             try:
                 coaching_off = not is_enabled()            # the in-UI toggle (cost floor)
-                time_left = _ask_time_left(req, time.time())
-                if coaching_off or _is_stale_decision(req, time.time()) or time_left < MIN_ASK_S:  # per-request: a backlog can age a decision mid-pass
+                now = time.time()
+                time_left = _ask_time_left(req, now)
+                stale = _is_stale_decision(req, now)
+                if coaching_off or stale or time_left < MIN_ASK_S:  # per-request: a backlog can age a decision mid-pass
                     # coaching toggled OFF, or the decision aged past the live window: skip the
                     # claude SPEND either way, but still answer with the honest facts-only floor —
                     # a still-polling player (the browser polls ~60s) gets band / equity / pot-odds,
@@ -1165,7 +1167,7 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                     if responded:
                         served[source] = served.get(source, 0) + 1
                     reason = ("coaching OFF" if coaching_off else
-                              "stale decision" if _is_stale_decision(req, time.time()) else
+                              "stale decision" if stale else
                               "UI budget spent waiting behind another pass")
                     print(f"[coach_daemon] {reason} #{req['id']} → facts-only stub (no claude spend) "
                           f"[{_tally(served)}]", file=sys.stderr)
@@ -1173,7 +1175,10 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                 if breaker.should_call_claude():
                     responded, source = answer_one(req, runner=_bounded(pick_runner(), min(CLAUDE_TIMEOUT, time_left)),
                                                    db=db, success_source=get_provider())
-                    transition = breaker.record(source)
+                    # an attempt capped below the full timeout failing says nothing about the provider's
+                    # health (a cold call needs more than 10-20s): only a success counts from a capped one
+                    transition = (breaker.record(source)
+                                  if time_left >= CLAUDE_TIMEOUT or source == get_provider() else None)
                     if transition == "open":
                         print(f"[coach_daemon] ⚠ CIRCUIT BREAKER OPEN — coach provider failing; serving stubs "
                               f"for {BREAKER_COOLDOWN:.0f}s", file=sys.stderr)

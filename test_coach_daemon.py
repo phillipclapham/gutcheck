@@ -303,7 +303,7 @@ class TestRunLoop(unittest.TestCase):
 
         coach_daemon.run(once=True, runner=runner, db=self.tmp)
         self.assertEqual(len(seen), 1)                      # the 90s-old request never reached the runner
-        self.assertLessEqual(seen[0], coach_daemon.UI_ASK_BUDGET_S - 50 + 1)
+        self.assertAlmostEqual(seen[0], coach_daemon.UI_ASK_BUDGET_S - 50, delta=2)   # CLAUDE_TIMEOUT (90) is the larger
         self.assertEqual(coach.poll(spent, self.tmp)["status"], "answered")   # …but was still answered (stub)
 
     def test_coaching_off_serves_facts_floor_without_calling_claude(self):
