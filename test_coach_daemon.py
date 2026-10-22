@@ -11,6 +11,7 @@ logged-in `claude` and spends a real call, so here it's stubbed via the injectab
 
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -305,6 +306,36 @@ class TestRunLoop(unittest.TestCase):
         self.assertEqual(len(seen), 1)                      # the 90s-old request never reached the runner
         self.assertAlmostEqual(seen[0], coach_daemon.UI_ASK_BUDGET_S - 50, delta=2)   # CLAUDE_TIMEOUT (90) is the larger
         self.assertEqual(coach.poll(spent, self.tmp)["status"], "answered")   # …but was still answered (stub)
+
+    def test_capped_ask_failing_does_not_trip_the_breaker_but_a_near_full_one_does(self):
+        # the breaker gate in run(): an attempt capped below half of CLAUDE_TIMEOUT that fails says nothing
+        # about provider health, so it must not open the breaker; the same failure with a near-full budget
+        # left counts. Threshold 1 makes a single counted failure open it, so the SECOND ask reaches the
+        # runner only if the first did not count.
+        saved = (coach_daemon.BREAKER_THRESHOLD, coach_daemon.UI_ASK_BUDGET_S, coach_daemon.CLAUDE_TIMEOUT)
+        coach_daemon.BREAKER_THRESHOLD, coach_daemon.UI_ASK_BUDGET_S, coach_daemon.CLAUDE_TIMEOUT = 1, 95.0, 90.0
+        try:
+            budget, full = coach_daemon.UI_ASK_BUDGET_S, coach_daemon.CLAUDE_TIMEOUT
+            # capped: left = full/2 - 10 (and >= MIN_ASK_S); near-full: left = the whole budget less 5s
+            for age, runner_calls in ((budget - (full / 2 - 10), 2), (5, 1)):
+                tmpdir = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, tmpdir, True)
+                db = Path(tmpdir) / "coach_test.db"
+                ids = [coach.ask("review", _decision_ctx(), db) for _ in range(2)]
+                with coach._conn(db) as c:
+                    c.execute("UPDATE requests SET created=?", (time.time() - age,))
+                calls = []
+
+                def failing(prompt, timeout=None):
+                    calls.append(timeout)
+                    return ""                               # the provider failed
+
+                coach_daemon.run(once=True, runner=failing, db=db, startup_probe=False)
+                self.assertEqual(len(calls), runner_calls, f"age {age}s")
+                for rid in ids:
+                    self.assertEqual(coach.poll(rid, db)["status"], "answered")   # all answered (stubs)
+        finally:
+            coach_daemon.BREAKER_THRESHOLD, coach_daemon.UI_ASK_BUDGET_S, coach_daemon.CLAUDE_TIMEOUT = saved
 
     def test_coaching_off_serves_facts_floor_without_calling_claude(self):
         # the in-UI toggle OFF (settings.coaching_enabled → False): the worker answers from the

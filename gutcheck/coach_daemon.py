@@ -1154,10 +1154,11 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
                 time_left = _ask_time_left(req, now)
                 stale = _is_stale_decision(req, now)
                 if coaching_off or stale or time_left < MIN_ASK_S:  # per-request: a backlog can age a decision mid-pass
-                    # coaching toggled OFF, or the decision aged past the live window: skip the
-                    # claude SPEND either way, but still answer with the honest facts-only floor —
-                    # a still-polling player (the browser polls ~60s) gets band / equity / pot-odds,
-                    # never a dead placeholder. Neither is a claude-health signal, so the breaker is
+                    # coaching toggled OFF, the decision aged past the live window, or the ask spent its
+                    # UI poll budget queued behind another pass: skip the claude SPEND in all three, but
+                    # still answer with the honest facts-only floor —
+                    # a still-polling player (the browser polls ~100s) gets band / equity / pot-odds,
+                    # never a dead placeholder. None is a claude-health signal, so the breaker is
                     # untouched (we `continue` past breaker.record). COUNT the stub: with coaching OFF
                     # this is the NORMAL path, so an uncounted answer would make the served tally read
                     # 0 while the floor is in fact serving every request. facts_mode=coaching_off →
@@ -1216,8 +1217,9 @@ def run(once: bool = False, interval: float = POLL_INTERVAL, runner=None, db=Non
         # closed — gated on the non-mutating is_closed, i.e. the provider is PROVEN-good, not merely
         # "not cooling down": seeding in the post-cooldown-unproven / half-open window would burn a full
         # author timeout on a still-wedged provider, codex L3 HIGH-1) AND this poll had NO pending requests
-        # (idle): the author call is SYNCHRONOUS in this loop, so seeding only when idle keeps a waiting
-        # player from sitting behind it (L1 MED-1 / L2 F7). last_seed is bumped whether the pass seeds,
+        # (idle): the author call is SYNCHRONOUS in this loop, so no seed STARTS while a request is pending.
+        # An ask that arrives DURING a seed still waits behind it; its answer is bounded by UI_ASK_BUDGET_S
+        # (L1 MED-1 / L2 F7). last_seed is bumped whether the pass seeds,
         # no-ops, or fails: the min-interval is the anti-hammer backstop (a rejected commit leaves the count
         # high, which would otherwise re-fire the runner every idle poll). The pass itself never raises
         # (seed_leaks is fully guarded). The author runner gets a SHORTER timeout than a coach answer
